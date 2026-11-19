@@ -51,6 +51,8 @@ input,select,textarea{border:1.5px solid var(--gris-claro);border-radius:10px;pa
 input:focus,select:focus,textarea:focus{border-color:var(--naranja)}
 .btn{border:0;border-radius:10px;padding:10px 16px;font-weight:600;background:var(--naranja);color:#fff;white-space:nowrap}
 .btn:hover{background:var(--naranja-osc)}
+.btn:disabled{background:var(--gris-claro);color:var(--gris-med);cursor:default}
+.card.editando{box-shadow:0 0 0 2px var(--naranja),var(--sombra)}
 .btn.sec{background:var(--gris-claro);color:var(--gris)}
 .btn.sec:hover{background:#d8dbdf}
 .btn.peligro{background:#fbe7e7;color:var(--rojo)}
@@ -225,7 +227,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.2.3';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -367,7 +369,19 @@ function render(){
     cont.innerHTML = `<div class="vacio">${vista==='pend' && !q && !fOp.value && !fProv.value ? '🎉 No hay centros pendientes' : 'No hay centros que coincidan'}</div>`;
     return;
   }
+  // conservar lo que se esté editando sin guardar
+  const pend = {};
+  cont.querySelectorAll('.card.editando').forEach(card => {
+    const id = card.querySelector('[data-act=guardarDet]').dataset.id; pend[id] = {};
+    card.querySelectorAll('[data-f]').forEach(el => pend[id][el.dataset.f] = el.value);
+  });
   cont.innerHTML = l.map(cardHTML).join('');
+  Object.entries(pend).forEach(([id, vals]) => {
+    const btn = cont.querySelector(`[data-act=guardarDet][data-id="${id}"]`); if (!btn) return;
+    const card = btn.closest('.card');
+    Object.entries(vals).forEach(([k, v]) => { const el = card.querySelector(`[data-f="${k}"]`); if (el) el.value = v; });
+    card.classList.add('editando'); btn.disabled = false;
+  });
 }
 
 function cardHTML(c){
@@ -410,17 +424,20 @@ function cardHTML(c){
     <div class="pasos">${chips}</div>
     ${!ab && c.notas ? `<div class="nota-prev">📝 ${esc(c.notas.length>90?c.notas.slice(0,90)+'…':c.notas)}</div>`:''}
     <div class="extra">
-      <textarea data-act="notas" data-id="${c.id}" placeholder="Notas (incidencias, qué falta, etc.)">${esc(c.notas||'')}</textarea>
+      <textarea data-f="notas" placeholder="Notas (incidencias, qué falta, etc.)">${esc(c.notas||'')}</textarea>
       <div class="fila">
-        <label class="f" style="flex:1;min-width:130px">Operario<input data-act="campo" data-k="operario" data-id="${c.id}" value="${esc(c.operario)}" list="dlOps"></label>
-        <label class="f" style="flex:0 1 90px">Tipo<select data-act="campo" data-k="tipo" data-id="${c.id}">${['CT','PT','ST'].map(t=>`<option ${t===c.tipo?'selected':''}>${t}</option>`).join('')}</select></label>
-        <label class="f" style="flex:1;min-width:120px">Provincia<select data-act="campo" data-k="provincia" data-id="${c.id}">${S.provincias.map(p=>`<option ${p.nombre===c.provincia?'selected':''}>${esc(p.nombre)}</option>`).join('')}</select></label>
-        <label class="f" style="flex:1;min-width:120px">Fecha<input type="date" data-act="campo" data-k="fecha" data-id="${c.id}" value="${esc(c.fecha||'')}"></label>
-        ${done?`<label class="f" style="flex:1;min-width:190px">Subido a SharePoint<input type="datetime-local" data-act="subida" data-id="${c.id}" value="${aLocal(c.pasos[FIN])}"></label>`:''}
+        <label class="f" style="flex:1;min-width:130px">Operario<input data-f="operario" value="${esc(c.operario)}" list="dlOps"></label>
+        <label class="f" style="flex:0 1 90px">Tipo<select data-f="tipo">${['CT','PT','ST'].map(t=>`<option ${t===c.tipo?'selected':''}>${t}</option>`).join('')}</select></label>
+        <label class="f" style="flex:1;min-width:120px">Provincia<select data-f="provincia">${S.provincias.map(p=>`<option ${p.nombre===c.provincia?'selected':''}>${esc(p.nombre)}</option>`).join('')}</select></label>
+        <label class="f" style="flex:1;min-width:120px">Fecha<input type="date" data-f="fecha" value="${esc(c.fecha||'')}"></label>
+        ${done?`<label class="f" style="flex:1;min-width:190px">Subido a SharePoint<input type="datetime-local" data-f="subida" value="${aLocal(c.pasos[FIN])}"></label>`:''}
       </div>
       ${hist?`<div class="hist">${hist}</div>`:''}
-      <div class="fila"><span class="sp"></span>
+      <div class="fila">
         <button class="btn peligro" data-act="borrar" data-id="${c.id}">${borrarPend===c.id?'¿Seguro? Pulsa otra vez':'🗑 Borrar centro'}</button>
+        <span class="sp"></span>
+        <button class="btn sec" data-act="cancelarDet" data-id="${c.id}">Cancelar</button>
+        <button class="btn" data-act="guardarDet" data-id="${c.id}" disabled>✓ Guardar cambios</button>
       </div>
     </div>
   </div>`;
@@ -481,6 +498,10 @@ lista.addEventListener('click', e => {
       if (p === FIN) toast(`✓ Centro ${c.numero} completado`);
     }
     guardar(); render();
+  } else if (act === 'guardarDet'){
+    guardarDetalles(c, b.closest('.card'));
+  } else if (act === 'cancelarDet'){
+    abiertos.delete(c.id); render();
   } else if (act === 'informe'){
     window.open('../InformesConBT/?cd=' + encodeURIComponent(c.numero), 'informesbt');
   } else if (act === 'abrir'){
@@ -493,20 +514,28 @@ lista.addEventListener('click', e => {
     } else { borrarPend = c.id; render(); setTimeout(()=>{ if(borrarPend===c.id){borrarPend=null;render();} }, 4000); }
   }
 });
-lista.addEventListener('change', e => {
-  const b = e.target.closest('[data-act]'); if (!b) return;
-  const c = S.centros.find(x => x.id === b.dataset.id); if (!c) return;
-  if (b.dataset.act === 'subida'){
-    const t = new Date(b.value).getTime();
-    if (b.value && !isNaN(t)){ c.pasos[FIN] = t; guardar(); render(); toast('Fecha de subida cambiada'); }
-    return;
+// Los cambios de los detalles no se guardan hasta pulsar "Guardar cambios"
+function marcarEdicion(e){
+  const f = e.target.closest('[data-f]'); if (!f) return;
+  const card = f.closest('.card');
+  card.classList.add('editando');
+  card.querySelector('[data-act=guardarDet]').disabled = false;
+}
+lista.addEventListener('input', marcarEdicion);
+lista.addEventListener('change', marcarEdicion);
+function guardarDetalles(c, card){
+  const v = k => { const el = card.querySelector(`[data-f="${k}"]`); return el ? el.value : null; };
+  const op = (v('operario')||'').trim();
+  if (!op) return toast('Pon el nombre del operario');
+  const sub = v('subida');
+  if (sub !== null){
+    const t = new Date(sub).getTime();
+    if (!sub || isNaN(t)) return toast('La fecha de subida no es válida');
+    c.pasos[FIN] = t;
   }
-  if (b.dataset.act === 'notas'){ c.notas = b.value; guardar(); }
-  if (b.dataset.act === 'campo'){
-    const v = b.value.trim(); if (!v && b.dataset.k!=='fecha') return render();
-    c[b.dataset.k] = v; guardar(); render();
-  }
-});
+  c.notas = v('notas') || ''; c.operario = op; c.tipo = v('tipo'); c.provincia = v('provincia'); c.fecha = v('fecha') || '';
+  guardar(); abiertos.delete(c.id); render(); toast('Cambios guardados');
+}
 
 /* ---------- Ajustes ---------- */
 const mA = document.getElementById('mAjustes');
