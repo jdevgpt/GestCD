@@ -72,7 +72,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--naranja)}
 /* Tarjetas */
 .lista{display:grid;gap:10px}
 .card{background:#fff;border-radius:var(--radio);box-shadow:var(--sombra);padding:12px 14px;border-left:5px solid var(--naranja)}
-.card.done{border-left-color:var(--ok);opacity:.85}
+.card.done{opacity:.8}
+.tag.rep{background:#fde8e8;color:var(--rojo);font-weight:700}
+.pista .aviso{color:var(--rojo);font-weight:700;flex-basis:100%}
+.prov-row .t input[type=color]{width:34px;height:28px;padding:0;border:0;background:none}
 .card-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .num{font-size:19px;font-weight:800;color:var(--gris)}
 .tag{font-size:12px;padding:3px 9px;border-radius:20px;background:var(--gris-fondo);color:var(--gris)}
@@ -175,6 +178,13 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
     <input id="fBuscar" type="search" placeholder="Buscar nº centro o línea…">
     <select id="fOp"><option value="">Todos los operarios</option></select>
     <select id="fProv"><option value="">Todas las provincias</option></select>
+    <select id="fOrden">
+      <option value="fecha">Fecha (más antigua primero)</option>
+      <option value="fechaD">Fecha (más reciente primero)</option>
+      <option value="nombre">Nombre del operario</option>
+      <option value="prov">Provincia</option>
+      <option value="num">Nº centro</option>
+    </select>
   </div>
 
   <div class="lista" id="lista"></div>
@@ -215,7 +225,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.2.0';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -245,19 +255,28 @@ function infoCD(n){
   if (!r) return null;
   return { linea: r[0] >= 0 ? BD.l[r[0]] : '', codigo: r[1]||'', direccion: r[2]||'' };
 }
+const normCD = n => String(n||'').trim().toUpperCase().replace(/^0+(?=\d)/,'');
+function avisoRep(n){
+  const ya = S.centros.filter(c => normCD(c.numero) === normCD(n));
+  if (!ya.length) return '';
+  return '<span class="aviso">⚠ Centro repetido: ' + ya.map(c => hecho(c)
+    ? `completado el ${fmtTs(c.pasos[FIN])} (${esc(c.operario)})`
+    : `pendiente (${esc(c.operario)}, ${fmtF(c.fecha)})`).join(' · ') + '</span>';
+}
 function pista(){
   const el = document.getElementById('pista'), n = document.getElementById('iNum').value.trim();
   el.className = 'pista';
   if (!n) return;
   if (!BD){ el.className='pista on no'; el.textContent='Cargando base de centros…'; return; }
   const i = infoCD(n);
-  if (!i){ el.className='pista on no'; el.textContent='Centro no encontrado en la base de datos'; return; }
+  if (!i){ el.className='pista on no'; el.innerHTML = avisoRep(n) + 'Centro no encontrado en la base de datos'; return; }
   el.className = 'pista on';
-  el.innerHTML = `<span>Línea: <b>${esc(i.linea||'—')}</b></span>${i.direccion?`<span>📍 ${esc(i.direccion)}</span>`:''}`;
+  el.innerHTML = avisoRep(n) + `<span>Línea: <b>${esc(i.linea||'—')}</b></span>${i.direccion?`<span>📍 ${esc(i.direccion)}</span>`:''}`;
 }
 let vista = 'pend';
 let abiertos = new Set();
 let borrarPend = null;
+let dupOK = null;
 
 /* ---------- Datos ---------- */
 function cargar(){
@@ -277,6 +296,12 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const fmtF = iso => iso ? iso.split('-').reverse().join('/') : '';
 const fmtTs = ts => { if(!ts) return ''; const d=new Date(ts); return d.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}); };
 
+const PALETA = ['#2F7FD1','#2E9E5B','#F26B1D','#9B51E0','#D64545','#C9A227','#16A3A3','#E0569B'];
+function colorProv(nombre){
+  const i = S.provincias.findIndex(p => p.nombre === nombre);
+  if (i < 0) return '#8A9099';
+  return S.provincias[i].color || PALETA[i % PALETA.length];
+}
 function provDe(c){ return S.provincias.find(p => p.nombre === c.provincia); }
 function pasosDe(c){
   const p = provDe(c);
@@ -321,10 +346,18 @@ function render(){
     (!q || c.numero.toLowerCase().includes(q) || (c.linea||'').toLowerCase().includes(q)) &&
     (!fOp.value || c.operario === fOp.value) &&
     (!fProv.value || c.provincia === fProv.value));
+  const ord = document.getElementById('fOrden').value;
+  const cmpF = (a,b) => (a.fecha||'').localeCompare(b.fecha||'') || a.creado - b.creado;
+  const cmpTxt = (x,y) => (x||'').localeCompare(y||'', 'es', {sensitivity:'base'});
   l.sort((a,b) => {
     if (hecho(a) !== hecho(b)) return hecho(a) ? 1 : -1;
-    if (hecho(a)) return b.pasos[FIN] - a.pasos[FIN];
-    return (a.fecha||'').localeCompare(b.fecha||'') || a.creado - b.creado;
+    switch (ord){
+      case 'fechaD': return -cmpF(a,b);
+      case 'nombre': return cmpTxt(a.operario,b.operario) || cmpF(a,b);
+      case 'prov':   return cmpTxt(a.provincia,b.provincia) || cmpF(a,b);
+      case 'num':    return a.numero.localeCompare(b.numero, 'es', {numeric:true});
+      default:       return hecho(a) ? b.pasos[FIN] - a.pasos[FIN] : cmpF(a,b);
+    }
   });
 
   const cont = document.getElementById('lista');
@@ -353,13 +386,16 @@ function cardHTML(c){
 
   const hist = pasos.filter(p => c.pasos[p.id]).map(p => `${esc(p.nombre)}: ${fmtTs(c.pasos[p.id])}`).join(' · ');
 
-  return `<div class="card ${done?'done':''} ${ab?'abierta':''}">
+  const col = colorProv(c.provincia);
+  const veces = S.centros.filter(x => normCD(x.numero) === normCD(c.numero)).length;
+  return `<div class="card ${done?'done':''} ${ab?'abierta':''}" style="border-left-color:${col}">
     <div class="card-h">
       <span class="num">${esc(c.numero)}</span>
       ${c.linea?`<span class="tag lin">⚡ ${esc(c.linea)}</span>`:''}
       ${c.tipo?`<span class="tag">${esc(c.tipo)}</span>`:''}
       <span class="tag">👷 ${esc(c.operario)}</span>
-      <span class="tag prov">${esc(c.provincia)}</span>
+      <span class="tag prov" style="background:${col}1F;color:${col}">${esc(c.provincia)}</span>
+      ${veces>1?`<span class="tag rep" title="Este centro está ${veces} veces">⚠ Repetido ×${veces}</span>`:''}
       ${c.fecha?`<span class="tag">📅 ${fmtF(c.fecha)}</span>`:''}
       ${done?`<span class="tag ok">✓ Completado</span>`:''}
       <span class="sp"></span>
@@ -389,7 +425,7 @@ function cardHTML(c){
 
 /* ---------- Eventos ---------- */
 document.getElementById('iFecha').value = hoyISO();
-document.getElementById('iNum').addEventListener('input', pista);
+document.getElementById('iNum').addEventListener('input', () => { dupOK = null; document.getElementById('msgNuevo').textContent=''; pista(); });
 
 document.getElementById('fNuevo').addEventListener('submit', e => {
   e.preventDefault();
@@ -398,9 +434,15 @@ document.getElementById('fNuevo').addEventListener('submit', e => {
   const prov = document.getElementById('iProv').value;
   const msg = document.getElementById('msgNuevo');
   if (!num || !op) return;
-  const dup = S.centros.find(c => c.numero.toLowerCase() === num.toLowerCase() && !hecho(c));
-  if (dup){ msg.textContent = `El centro ${num} ya está en pendientes (${dup.operario}).`; return; }
-  msg.textContent = '';
+  const dup = S.centros.find(c => normCD(c.numero) === normCD(num) && !hecho(c));
+  if (dup){ msg.textContent = `⚠ El centro ${num} ya está en pendientes (${dup.operario}).`; toast(`⚠ Centro ${num} repetido`); return; }
+  const hechoAntes = S.centros.find(c => normCD(c.numero) === normCD(num));
+  if (hechoAntes && dupOK !== normCD(num)){
+    dupOK = normCD(num);
+    msg.textContent = `⚠ El centro ${num} ya se completó el ${fmtTs(hechoAntes.pasos[FIN])}. Pulsa Añadir otra vez si quieres meterlo de nuevo.`;
+    toast(`⚠ Centro ${num} repetido`); return;
+  }
+  dupOK = null; msg.textContent = '';
   const inf = infoCD(num) || {};
   S.centros.push({id:uid(), numero:num, operario:op, provincia:prov, linea:inf.linea||'', tipo:document.getElementById('iTipo').value, codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:document.getElementById('iFecha').value, notas:'', pasos:{}, creado:Date.now()});
   localStorage.setItem(KEY+'_ultProv', prov);
@@ -418,6 +460,9 @@ function setVista(v){
   render();
 }
 document.getElementById('tabs').addEventListener('click', e => { if (e.target.dataset.v) setVista(e.target.dataset.v); });
+const fOrden = document.getElementById('fOrden');
+try{ fOrden.value = localStorage.getItem(KEY+'_orden') || 'fecha'; }catch(_){}
+fOrden.addEventListener('change', () => { try{ localStorage.setItem(KEY+'_orden', fOrden.value); }catch(_){} render(); });
 ['fBuscar','fOp','fProv'].forEach(id => document.getElementById(id).addEventListener('input', render));
 
 const lista = document.getElementById('lista');
@@ -470,7 +515,7 @@ function renderAjustes(){
     </div>`).join('');
   document.getElementById('lProv').innerHTML = S.provincias.map((pr,i) => `
     <div class="prov-row">
-      <div class="t"><span>${esc(pr.nombre)}</span><span class="sp"></span>
+      <div class="t"><input type="color" data-color="${i}" value="${colorProv(pr.nombre)}" title="Color de la provincia"><span style="color:${colorProv(pr.nombre)}">${esc(pr.nombre)}</span><span class="sp"></span>
         <button class="mini" data-delprov="${i}" title="Eliminar provincia">🗑</button></div>
       ${S.pasos.map(p => `<label class="chk"><input type="checkbox" data-prov="${i}" data-paso="${p.id}" ${pr.pasos.includes(p.id)?'checked':''}>${esc(p.nombre)}</label>`).join('')}
     </div>`).join('');
@@ -478,6 +523,7 @@ function renderAjustes(){
 }
 mA.addEventListener('change', e => {
   const t = e.target;
+  if (t.dataset.color !== undefined){ S.provincias[+t.dataset.color].color = t.value; guardar(); renderAjustes(); return; }
   if (t.dataset.pid){ const p = S.pasos.find(x=>x.id===t.dataset.pid); if (t.value.trim()) p.nombre = t.value.trim(); guardar(); renderAjustes(); }
   if (t.dataset.prov !== undefined){
     const pr = S.provincias[+t.dataset.prov];
@@ -557,8 +603,7 @@ document.getElementById('bBorrarDone').onclick = e => {
 /* ---------- Integración con Informe BT ---------- */
 // InformesConBT (misma web) guarda en 'jdev_informes' los centros cuyo informe se ha descargado
 // Además se miran los centros guardados en Informe BT ('ibt_estado') que ya tienen
-// defectos o están marcados "sin defectos" (informes hechos antes de la integración)
-const normCD = n => String(n||'').trim().toUpperCase().replace(/^0+(?=\d)/,'');
+// (con o sin defectos): si está allí, el informe está hecho
 function syncInformes(){
   const m = {};
   try{ Object.assign(m, JSON.parse(localStorage.getItem('jdev_informes') || '{}')); }catch(_){}
@@ -566,7 +611,7 @@ function syncInformes(){
     const ibt = JSON.parse(localStorage.getItem('ibt_estado') || 'null');
     (ibt && ibt.lineas || []).forEach(l => (l.centros || []).forEach(c => {
       const k = normCD(c.centro);
-      if (k && !m[k] && (c.sinDefectos || (c.defectos && c.defectos.length))) m[k] = Date.now();
+      if (k && !m[k]) m[k] = Date.now();
     }));
   }catch(_){}
   const marcados = [];
