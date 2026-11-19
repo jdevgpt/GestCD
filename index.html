@@ -225,7 +225,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -294,6 +294,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6
 const hoyISO = () => { const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtF = iso => iso ? iso.split('-').reverse().join('/') : '';
+const aLocal = ts => { const d=new Date(ts); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,16); };
 const fmtFull = ts => { if(!ts) return ''; const d=new Date(ts); return d.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'})+' '+d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}); };
 const fmtTs = ts => { if(!ts) return ''; const d=new Date(ts); return d.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}); };
 
@@ -398,7 +399,7 @@ function cardHTML(c){
       <span class="tag prov" style="background:${col}1F;color:${col}">${esc(c.provincia)}</span>
       ${veces>1?`<span class="tag rep" title="Este centro está ${veces} veces">⚠ Repetido ×${veces}</span>`:''}
       ${c.fecha?`<span class="tag">📅 ${fmtF(c.fecha)}</span>`:''}
-      ${done?`<span class="tag ok" title="Fecha de subida a SharePoint">☁ Subido ${fmtFull(c.pasos[FIN])}</span>`:''}
+      ${done?`<span class="tag ok" data-act="abrir" data-id="${c.id}" style="cursor:pointer" title="Pulsa para cambiar la fecha de subida">☁ Subido ${fmtFull(c.pasos[FIN])}</span>`:''}
       <span class="sp"></span>
       <span class="hist">${nHechos}/${pasos.length}</span>
       ${pasos.some(p=>p.id==='informe') && !done ? `<button class="mini" data-act="informe" data-id="${c.id}" title="Abrir en Informe BT">📄</button>`:''}
@@ -415,6 +416,7 @@ function cardHTML(c){
         <label class="f" style="flex:0 1 90px">Tipo<select data-act="campo" data-k="tipo" data-id="${c.id}">${['CT','PT','ST'].map(t=>`<option ${t===c.tipo?'selected':''}>${t}</option>`).join('')}</select></label>
         <label class="f" style="flex:1;min-width:120px">Provincia<select data-act="campo" data-k="provincia" data-id="${c.id}">${S.provincias.map(p=>`<option ${p.nombre===c.provincia?'selected':''}>${esc(p.nombre)}</option>`).join('')}</select></label>
         <label class="f" style="flex:1;min-width:120px">Fecha<input type="date" data-act="campo" data-k="fecha" data-id="${c.id}" value="${esc(c.fecha||'')}"></label>
+        ${done?`<label class="f" style="flex:1;min-width:190px">Subido a SharePoint<input type="datetime-local" data-act="subida" data-id="${c.id}" value="${aLocal(c.pasos[FIN])}"></label>`:''}
       </div>
       ${hist?`<div class="hist">${hist}</div>`:''}
       <div class="fila"><span class="sp"></span>
@@ -494,6 +496,11 @@ lista.addEventListener('click', e => {
 lista.addEventListener('change', e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const c = S.centros.find(x => x.id === b.dataset.id); if (!c) return;
+  if (b.dataset.act === 'subida'){
+    const t = new Date(b.value).getTime();
+    if (b.value && !isNaN(t)){ c.pasos[FIN] = t; guardar(); render(); toast('Fecha de subida cambiada'); }
+    return;
+  }
   if (b.dataset.act === 'notas'){ c.notas = b.value; guardar(); }
   if (b.dataset.act === 'campo'){
     const v = b.value.trim(); if (!v && b.dataset.k!=='fecha') return render();
