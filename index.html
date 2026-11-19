@@ -225,7 +225,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -294,6 +294,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6
 const hoyISO = () => { const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); };
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtF = iso => iso ? iso.split('-').reverse().join('/') : '';
+const fmtFull = ts => { if(!ts) return ''; const d=new Date(ts); return d.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit',year:'numeric'})+' '+d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}); };
 const fmtTs = ts => { if(!ts) return ''; const d=new Date(ts); return d.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'}); };
 
 const PALETA = ['#2F7FD1','#2E9E5B','#F26B1D','#9B51E0','#D64545','#C9A227','#16A3A3','#E0569B'];
@@ -381,7 +382,7 @@ function cardHTML(c){
     const on = !!c.pasos[p.id];
     const bloq = p.id === FIN && !on && !listosPrevios;
     return `<button class="paso ${on?'on':''} ${p.id===FIN?'fin':''}" data-act="paso" data-id="${c.id}" data-p="${p.id}" ${bloq?'disabled title="Completa antes los pasos anteriores"':''} ${p.desc?`title="${esc(p.desc)}"`:''}>
-      <span class="cb">${on?'✓':''}</span>${p.id===FIN?'☁ ':''}${esc(p.nombre)}</button>`;
+      <span class="cb">${on?'✓':''}</span>${p.id===FIN?'☁ ':''}${esc(p.nombre)}${p.id===FIN&&on?` <small>${fmtFull(c.pasos[FIN])}</small>`:''}</button>`;
   }).join('');
 
   const hist = pasos.filter(p => c.pasos[p.id]).map(p => `${esc(p.nombre)}: ${fmtTs(c.pasos[p.id])}`).join(' · ');
@@ -397,7 +398,7 @@ function cardHTML(c){
       <span class="tag prov" style="background:${col}1F;color:${col}">${esc(c.provincia)}</span>
       ${veces>1?`<span class="tag rep" title="Este centro está ${veces} veces">⚠ Repetido ×${veces}</span>`:''}
       ${c.fecha?`<span class="tag">📅 ${fmtF(c.fecha)}</span>`:''}
-      ${done?`<span class="tag ok">✓ Completado</span>`:''}
+      ${done?`<span class="tag ok" title="Fecha de subida a SharePoint">☁ Subido ${fmtFull(c.pasos[FIN])}</span>`:''}
       <span class="sp"></span>
       <span class="hist">${nHechos}/${pasos.length}</span>
       ${pasos.some(p=>p.id==='informe') && !done ? `<button class="mini" data-act="informe" data-id="${c.id}" title="Abrir en Informe BT">📄</button>`:''}
@@ -586,7 +587,7 @@ document.getElementById('bCSV').onclick = () => {
     const aplica = pasosDe(c).map(p=>p.id);
     return [c.numero, c.linea, c.tipo, c.codigo, c.direccion, c.operario, c.provincia, fmtF(c.fecha),
       ...S.pasos.map(p => aplica.includes(p.id) ? fmtTs(c.pasos[p.id]) : 'N/A'),
-      fmtTs(c.pasos[FIN]), c.notas].map(q).join(';');
+      fmtFull(c.pasos[FIN]), c.notas].map(q).join(';');
   });
   descargar(`GestCD_${hoyISO()}.csv`, '﻿' + [cols.map(q).join(';'), ...filas].join('\r\n'), 'text/csv;charset=utf-8');
 };
