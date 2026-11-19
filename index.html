@@ -215,7 +215,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -409,6 +409,7 @@ document.getElementById('fNuevo').addEventListener('submit', e => {
   document.getElementById('iNum').focus();
   if (vista==='done') setVista('pend'); else render();
   toast(`Centro ${num} añadido`);
+  syncInformes();
 });
 
 function setVista(v){
@@ -555,12 +556,23 @@ document.getElementById('bBorrarDone').onclick = e => {
 
 /* ---------- Integración con Informe BT ---------- */
 // InformesConBT (misma web) guarda en 'jdev_informes' los centros cuyo informe se ha descargado
+// Además se miran los centros guardados en Informe BT ('ibt_estado') que ya tienen
+// defectos o están marcados "sin defectos" (informes hechos antes de la integración)
+const normCD = n => String(n||'').trim().toUpperCase().replace(/^0+(?=\d)/,'');
 function syncInformes(){
-  let m; try{ m = JSON.parse(localStorage.getItem('jdev_informes') || '{}'); }catch(_){ return; }
+  const m = {};
+  try{ Object.assign(m, JSON.parse(localStorage.getItem('jdev_informes') || '{}')); }catch(_){}
+  try{
+    const ibt = JSON.parse(localStorage.getItem('ibt_estado') || 'null');
+    (ibt && ibt.lineas || []).forEach(l => (l.centros || []).forEach(c => {
+      const k = normCD(c.centro);
+      if (k && !m[k] && (c.sinDefectos || (c.defectos && c.defectos.length))) m[k] = Date.now();
+    }));
+  }catch(_){}
   const marcados = [];
   S.centros.forEach(c => {
-    const t = m[String(c.numero).trim().toUpperCase().replace(/^0+(?=\d)/,'')];
-    if (t && !c.pasos.informe && !hecho(c) && t >= c.creado && pasosDe(c).some(p => p.id === 'informe')){
+    const t = m[normCD(c.numero)];
+    if (t && !c.pasos.informe && !hecho(c) && pasosDe(c).some(p => p.id === 'informe')){
       c.pasos.informe = t; marcados.push(c.numero);
     }
   });
@@ -578,7 +590,8 @@ let swReg;
 if ('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').then(r => { swReg = r; }).catch(()=>{});
   let recargando = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => { if (!recargando){ recargando = true; location.reload(); } });
+  const habia = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (habia && !recargando){ recargando = true; location.reload(); } });
 }
 async function comprobarVersion(){
   try{
