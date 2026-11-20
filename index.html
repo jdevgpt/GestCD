@@ -242,7 +242,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -697,13 +697,28 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) sync
 
 /* ---------- Integración con KMZ + ANEXO III (kmzexcelbt) ---------- */
 // La app del KMZ (misma web) guarda en 'jdev_pasos' cuándo se hizo cada paso de cada centro:
-// { "45605": { fotos: ms, kmz: ms, excel: ms } }. Se marca el paso si el centro está pendiente,
+// { "45605": { tabla: ms, tipo: 'PT', fotos: ms, kmz: ms, excel: ms } }. Con 'tabla' se da de alta si no existe. Se marca el paso si el centro está pendiente,
 // lo tiene en su provincia y la marca es posterior a cuando se dio de alta el centro.
 const PASOS_KMZ = { fotos: '📷 Fotos', kmz: '🗺️ KMZ', excel: '📊 Excel' };
 function syncPasosKmz(){
   let m = {};
   try{ m = JSON.parse(localStorage.getItem('jdev_pasos') || '{}') || {}; }catch(_){ m = {}; }
   const avisos = [];
+  // Alta automática: si se ha metido la tabla de posiciones de un centro que no está en GestCD, se crea
+  let vistos = {};
+  try{ vistos = JSON.parse(localStorage.getItem(KEY + '_altasKmz') || '{}') || {}; }catch(_){ vistos = {}; }
+  let cambiosVistos = false;
+  Object.keys(m).forEach(k => {
+    const r = m[k]; if (!r || !r.tabla || (vistos[k] || 0) >= r.tabla) return;
+    vistos[k] = r.tabla; cambiosVistos = true;
+    if (S.centros.some(c => normCD(c.numero) === k)) return; // ya está (pendiente o completado): no se duplica
+    const inf = infoCD(k) || {};
+    const provs = (S.provincias || []).map(p => p.nombre);
+    const prov = localStorage.getItem(KEY + '_ultProv') || provs[0] || '';
+    S.centros.push({id:uid(), numero:k, operario:'Sin asignar', provincia:prov, linea:inf.linea||'', tipo:r.tipo||'PT', codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:hoyISO(), notas:'Creado desde la app del KMZ', pasos:{}, creado:r.tabla - 1000});
+    avisos.push('➕ Centro ' + k + ' creado');
+  });
+  if (cambiosVistos) localStorage.setItem(KEY + '_altasKmz', JSON.stringify(vistos));
   S.centros.forEach(c => {
     const r = m[normCD(c.numero)]; if (!r || hecho(c)) return;
     const ids = pasosDe(c).map(p => p.id);
