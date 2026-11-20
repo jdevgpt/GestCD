@@ -143,6 +143,10 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
   .form .btn{grid-column:1/-1}
   .stats b{font-size:20px}
 }
+  .pegar{margin-top:10px;font-size:14px}
+  .pegar summary{cursor:pointer;color:#666;font-weight:600}
+  .pegar textarea{width:100%;margin-top:8px;font:12px ui-monospace,Consolas,monospace;border:1px solid #ddd;border-radius:10px;padding:8px;white-space:pre;overflow:auto}
+  .pegar-acc{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
 </style>
 </head>
 <body>
@@ -181,6 +185,11 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
       <button class="btn" type="submit">＋ Añadir</button>
     </form>
     <datalist id="dlOps"></datalist>
+    <details class="pegar" id="dPegar">
+      <summary>📋 Pegar filas del parte diario (Excel de Badajoz o Sevilla)</summary>
+      <textarea id="tPegar" rows="3" placeholder="Copia en el Excel una o varias filas enteras (pulsando en el número de fila) y pégalas aquí. También puedes pegar una fila directamente en «Nº centro»."></textarea>
+      <div class="pegar-acc"><button class="btn" type="button" id="bPegar">＋ Añadir centros pegados</button><span class="msg" id="msgPegar"></span></div>
+    </details>
     <div class="pista" id="pista"></div>
     <div class="msg" id="msgNuevo"></div>
   </section>
@@ -242,7 +251,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -474,6 +483,103 @@ function cardHTML(c){
 document.getElementById('iFecha').value = hoyISO();
 document.getElementById('iNum').addEventListener('input', () => { dupOK = null; document.getElementById('msgNuevo').textContent=''; pista(); });
 
+/* ---------- Pegar filas del parte diario (Excel de Badajoz / Sevilla) ---------- */
+// Columnas (pestaña 2025): … NºCT(G) · [Badajoz: ¿revisado?(H) | Sevilla: LÍNEA(H)] · PROVINCIA(I) · UO · DENOM_LINEA · CD/PT(L) · FECHA INSPECCIÓN(M) · TCO1(N)
+// Se busca la columna PROVINCIA y el resto se toma por su posición respecto a ella, así vale para los dos formatos.
+const sinAc = t => String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
+const PROVS_ES = ['BADAJOZ','CACERES','SEVILLA','MALAGA','CORDOBA','JAEN','GRANADA','ALMERIA','HUELVA','CADIZ'];
+function fechaISO(v){
+  v = String(v||'').trim();
+  let m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+  if (m){ const y = m[3].length===2 ? '20'+m[3] : m[3]; return `${y}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`; }
+  if ((m = v.match(/^(\d{4})-(\d{2})-(\d{2})/))) return m[0];
+  if (/^\d{5}(\.\d+)?$/.test(v)){ const d = new Date(Math.round((+v - 25569)*86400000)); return d.toISOString().slice(0,10); }
+  return '';
+}
+const titulo = t => String(t||'').toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (a,b,c) => b + c.toUpperCase());
+function operarioDe(t){
+  const k = sinAc(t); if (!k) return '';
+  const ya = [...new Set(S.centros.map(c=>c.operario))].find(o => sinAc(o) === k);
+  return ya || titulo(t);
+}
+function tipoDe(t){
+  const k = sinAc(t);
+  if (/PT|INTEMPERIE|POSTE/.test(k)) return 'PT';
+  if (/^ST\b|SUBT/.test(k)) return 'ST';
+  if (k) return 'CT';
+  return 'PT';
+}
+function provinciaDe(t){
+  const k = sinAc(t); if (!k) return '';
+  const p = S.provincias.find(x => sinAc(x.nombre) === k);
+  if (p) return p.nombre;
+  const nombre = titulo(t).replace(/^Malaga$/,'Málaga').replace(/^Caceres$/,'Cáceres').replace(/^Cordoba$/,'Córdoba').replace(/^Jaen$/,'Jaén').replace(/^Almeria$/,'Almería').replace(/^Cadiz$/,'Cádiz');
+  S.provincias.push({nombre, pasos:S.pasos.filter(x=>x.id!=='firma').map(x=>x.id)});
+  toast(`Provincia ${nombre} añadida (puedes ajustar sus pasos en ⚙)`);
+  return nombre;
+}
+function leerParte(texto){
+  const filas = [];
+  String(texto||'').replace(/\r/g,'').split('\n').forEach(l => {
+    if (!l.includes('\t')) return;
+    const c = l.split('\t').map(x => x.trim());
+    const p = c.findIndex(x => PROVS_ES.includes(sinAc(x)) || S.provincias.some(q => sinAc(q.nombre) === sinAc(x) && x));
+    if (p < 2) return;
+    const num = c[p-2];
+    if (!/^\d{2,7}$/.test(num)) return;
+    const linea = [c[p+2], /^(SI|NO)$/i.test(c[p-1]) ? '' : c[p-1], /^\d+$/.test(c[p-3]||'') ? '' : c[p-3]].find(x => x && !/^\d+$/.test(x)) || '';
+    filas.push({ numero:num, provincia:c[p], tipo:tipoDe(c[p+3]), fecha:fechaISO(c[p+4]), operario:c[p+5]||'', linea });
+  });
+  return filas;
+}
+// Da de alta (o completa uno creado desde la app del KMZ). Devuelve 'nuevo' | 'completado' | 'pendiente' | 'hecho'
+function altaDesdeParte(d){
+  const n = normCD(d.numero);
+  const prov = provinciaDe(d.provincia) || localStorage.getItem(KEY+'_ultProv') || (S.provincias[0]||{}).nombre || '';
+  const op = operarioDe(d.operario) || 'Sin asignar';
+  const pend = S.centros.find(c => normCD(c.numero) === n && !hecho(c));
+  if (pend){
+    if (pend.operario !== 'Sin asignar') return 'pendiente';
+    Object.assign(pend, { operario:op, provincia:prov, tipo:d.tipo||pend.tipo, fecha:d.fecha||pend.fecha, linea:d.linea||pend.linea });
+    return 'completado';
+  }
+  if (S.centros.some(c => normCD(c.numero) === n)) return 'hecho';
+  const inf = infoCD(n) || {};
+  S.centros.push({id:uid(), numero:n, operario:op, provincia:prov, linea:d.linea||inf.linea||'', tipo:d.tipo||'PT', codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:d.fecha||hoyISO(), notas:'', pasos:{}, creado:Date.now()});
+  return 'nuevo';
+}
+document.getElementById('bPegar').addEventListener('click', () => {
+  const filas = leerParte(document.getElementById('tPegar').value);
+  const msg = document.getElementById('msgPegar');
+  if (!filas.length){ msg.textContent = '⚠ No encuentro filas del parte diario (copia las filas enteras del Excel).'; return; }
+  const r = { nuevo:[], completado:[], pendiente:[], hecho:[] };
+  filas.forEach(d => r[altaDesdeParte(d)].push(d.numero));
+  guardar(); if (vista==='done') setVista('pend'); else render();
+  const t = [];
+  if (r.nuevo.length) t.push(`➕ ${r.nuevo.length} añadido${r.nuevo.length>1?'s':''}: ${r.nuevo.join(', ')}`);
+  if (r.completado.length) t.push(`✏️ completados con operario y provincia: ${r.completado.join(', ')}`);
+  if (r.pendiente.length) t.push(`ya estaban pendientes: ${r.pendiente.join(', ')}`);
+  if (r.hecho.length) t.push(`ya completados antes (no se repiten; añádelos a mano si es una revisión nueva): ${r.hecho.join(', ')}`);
+  msg.textContent = t.join(' · ');
+  if (r.nuevo.length || r.completado.length){ document.getElementById('tPegar').value = ''; toast(`${r.nuevo.length + r.completado.length} centro(s) del parte`); }
+});
+// Pegar una fila en «Nº centro»: rellena el formulario (y si son varias, van a la caja de pegar)
+document.getElementById('iNum').addEventListener('paste', e => {
+  const t = (e.clipboardData || window.clipboardData).getData('text');
+  if (!t || !t.includes('\t')) return;
+  const filas = leerParte(t);
+  if (!filas.length) return;
+  e.preventDefault();
+  if (filas.length > 1){ const dp = document.getElementById('dPegar'); dp.open = true; document.getElementById('tPegar').value = t; document.getElementById('msgPegar').textContent = `${filas.length} filas: pulsa «Añadir centros pegados».`; return; }
+  const d = filas[0];
+  document.getElementById('iNum').value = d.numero; pista();
+  document.getElementById('iTipo').value = d.tipo;
+  if (d.operario) document.getElementById('iOp').value = operarioDe(d.operario);
+  const prov = provinciaDe(d.provincia); if (prov){ render(); document.getElementById('iProv').value = prov; }
+  if (d.fecha) document.getElementById('iFecha').value = d.fecha;
+  document.getElementById('msgNuevo').textContent = '📋 Datos del parte diario: revisa y pulsa Añadir.';
+});
+
 document.getElementById('fNuevo').addEventListener('submit', e => {
   e.preventDefault();
   const num = document.getElementById('iNum').value.trim();
@@ -482,6 +588,12 @@ document.getElementById('fNuevo').addEventListener('submit', e => {
   const msg = document.getElementById('msgNuevo');
   if (!num || !op) return;
   const dup = S.centros.find(c => normCD(c.numero) === normCD(num) && !hecho(c));
+  if (dup && dup.operario === 'Sin asignar'){
+    Object.assign(dup, { operario:op, provincia:prov, tipo:document.getElementById('iTipo').value, fecha:document.getElementById('iFecha').value || dup.fecha });
+    localStorage.setItem(KEY+'_ultProv', prov); guardar();
+    document.getElementById('iNum').value = ''; msg.textContent = ''; pista(); render();
+    toast(`Centro ${num} completado (venía de la app del KMZ)`); return;
+  }
   if (dup){ msg.textContent = `⚠ El centro ${num} ya está en pendientes (${dup.operario}).`; toast(`⚠ Centro ${num} repetido`); return; }
   const hechoAntes = S.centros.find(c => normCD(c.numero) === normCD(num));
   if (hechoAntes && dupOK !== normCD(num)){
