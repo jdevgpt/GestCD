@@ -139,7 +139,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--naranja)}
 .est{font-size:12px;padding:2px 8px;border-radius:20px;font-weight:600}
 .est.nuevo{background:var(--naranja-claro);color:var(--naranja-osc)}
 .est.act{background:#e6f0fb;color:#2F7FD1}
-.est.igual,.est.hecho{background:var(--gris-fondo);color:var(--gris-med)}
+.est.gest{background:#e4f5eb;color:var(--ok)}
+.est.igual,.est.hecho,.est.ofi{background:var(--gris-fondo);color:var(--gris-med)}
 #upd{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--gris);color:#fff;padding:10px 12px 10px 16px;border-radius:12px;display:none;align-items:center;gap:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:60}
 #upd.on{display:flex}
 #toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:var(--gris);color:#fff;padding:9px 14px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:70}
@@ -283,7 +284,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.7.2';
+const APP_VERSION = '1.8.0';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -574,7 +575,8 @@ function filaParte(o, provPorDefecto){
   const num = String(o.numero||'').trim().replace(/\.0+$/,'');
   if (!/^[A-Za-z]?\d{2,7}$/.test(num)) return null;
   return { numero:num, provincia:o.provincia || provPorDefecto, linea:String(o.linea||'').trim(), tipo:String(o.tipo||'').trim() ? tipoDe(o.tipo) : '',
-           fecha:fechaISO(o.fecha), operario:String(o.operario||'').trim(), obs:String(o.obs||'').trim() };
+           fecha:fechaISO(o.fecha), operario:String(o.operario||'').trim(), obs:String(o.obs||'').trim(),
+           oficina:/^(SI|S|X|OK)$/.test(sinAc(o.oficina)) };
 }
 function leerParte(texto){
   const fmt = document.getElementById('selFormato').value, F = FORMATOS[fmt];
@@ -584,6 +586,12 @@ function leerParte(texto){
     const c = l.split('\t').map(x => x.trim()), o = {};
     F.cols.forEach((k,i) => { if (k !== '-' && k !== 'obs') o[k] = c[i] || ''; });
     const io = F.cols.indexOf('obs'); o.obs = c.slice(io).filter(Boolean).join(' · ');
+    const esNombre = x => /\p{L}{2}/u.test(x||'') && !/^(SI|NO|S|N|X|OK)$/.test(sinAc(x)) && !fechaISO(x);
+    if (!esNombre(o.operario)){
+      const iFe = F.cols.indexOf('fecha'), iT = c.findIndex((x,i) => i > iFe && esNombre(x));
+      o.operario = iT >= 0 ? c[iT] : '';
+      if (iT >= 0) o.obs = c.slice(iT+1).filter(x => x && !/^(SI|NO)$/i.test(sinAc(x))).join(' · ');
+    }
     const d = filaParte(o, fmt); if (d) filas.push(d);
   });
   return filas;
@@ -632,6 +640,7 @@ async function leerXlsx(file){
 function campoDeTitulo(t){
   const h = sinAc(t).replace(/[^A-Z0-9]/g, '');
   if (!h) return '';
+  if (/OFICINA/.test(h)) return 'oficina';
   if (/REVIS/.test(h)) return '-';
   if (/^(N|NO|NUM|NUMERO)(DE|DEL)?(CT|CD|PT|CENTRO)$/.test(h) || /^(CT|CD|CENTRO)$/.test(h)) return 'numero';
   if (/PROVINCIA/.test(h)) return 'provincia';
@@ -657,7 +666,7 @@ function filasDelExcel(hojas, provPorDefecto){
       if (mapa.numero === undefined || (mapa.fecha === undefined && mapa.operario === undefined)) continue;
       for (let k = r+1; k < h.filas.length; k++){
         const f = h.filas[k] || [], o = {};
-        ['numero','provincia','linea','tipo','fecha','operario','obs'].forEach(c => { if (mapa[c] !== undefined) o[c] = f[mapa[c]]; });
+        ['numero','provincia','linea','tipo','fecha','operario','obs','oficina'].forEach(c => { if (mapa[c] !== undefined) o[c] = f[mapa[c]]; });
         const d = filaParte(o, provPorDefecto); if (!d) continue;
         leidas++;
         const n = normCD(d.numero);
@@ -669,9 +678,14 @@ function filasDelExcel(hojas, provPorDefecto){
   return { filas:Object.values(out), leidas };
 }
 let impFilas = [];
+const IMPORTABLE = ['nuevo','act','gest'];
 function estadoEnGestCD(d){
   const n = normCD(d.numero);
   const pend = S.centros.find(c => normCD(c.numero) === n && !hecho(c));
+  if (d.oficina){
+    if (pend) return ['gest', 'Revisado en oficina · se marca completado'];
+    return ['ofi', 'Ya gestionado en oficina'];
+  }
   if (pend){
     const op = operarioDe(d.operario);
     const cambia = (d.fecha && d.fecha !== pend.fecha) || (op && op !== pend.operario);
@@ -687,16 +701,16 @@ function estadoEnGestCD(d){
 }
 function verImport(){
   const desde = document.getElementById('impDesde').value, solo = document.getElementById('impSoloNuevos').checked;
-  const vis = impFilas.filter(x => (!desde || (x.d.fecha || '9999') >= desde) && (!solo || x.est[0] === 'nuevo' || x.est[0] === 'act'));
+  const vis = impFilas.filter(x => (!desde || (x.d.fecha || '9999') >= desde) && (!solo || IMPORTABLE.includes(x.est[0])));
   vis.sort((a,b) => (a.d.fecha||'').localeCompare(b.d.fecha||'') || a.d.numero.localeCompare(b.d.numero, 'es', {numeric:true}));
   document.getElementById('impFilas').innerHTML = vis.length ? vis.map(x => {
-    const ok = x.est[0] === 'nuevo' || x.est[0] === 'act';
+    const ok = IMPORTABLE.includes(x.est[0]);
     return `<tr><td><input type="checkbox" data-imp="${x.i}" ${ok && x.sel ? 'checked' : ''} ${ok ? '' : 'disabled'}></td>
       <td><b>${esc(x.d.numero)}</b></td><td>${esc(titulo(x.d.provincia))}</td><td>${esc(x.d.linea)}</td><td>${esc(x.d.tipo)}</td>
       <td>${fmtF(x.d.fecha) || '<span style="color:var(--rojo)">sin fecha</span>'}</td><td>${esc(operarioDe(x.d.operario)) || '<span style="color:var(--rojo)">sin técnico</span>'}</td>
       <td><span class="est ${x.est[0]}">${x.est[1]}</span></td></tr>`; }).join('')
     : '<tr><td colspan="8" class="vacio">No hay centros nuevos en esas fechas</td></tr>';
-  const n = impFilas.filter(x => x.sel && vis.includes(x) && (x.est[0] === 'nuevo' || x.est[0] === 'act')).length;
+  const n = impFilas.filter(x => x.sel && vis.includes(x) && IMPORTABLE.includes(x.est[0])).length;
   const b = document.getElementById('impOK'); b.textContent = `Importar ${n} centro${n===1?'':'s'}`; b.disabled = !n;
 }
 document.getElementById('fileParte').addEventListener('change', async e => {
@@ -713,8 +727,8 @@ document.getElementById('fileParte').addEventListener('change', async e => {
     const d0 = new Date(); d0.setDate(1);
     document.getElementById('impDesde').value = hoyISO().slice(0,8) + '01';
     document.getElementById('impTitulo').textContent = 'Importar · ' + f.name;
-    const nN = impFilas.filter(x => x.est[0] === 'nuevo').length, nA = impFilas.filter(x => x.est[0] === 'act').length;
-    document.getElementById('impInfo').textContent = `${r.filas.length} centros en el Excel · ${nN} nuevos · ${nA} pendientes con fecha o técnico distintos. Por defecto se muestran los inspeccionados este mes; cambia la fecha para ver más.`;
+    const nN = impFilas.filter(x => x.est[0] === 'nuevo').length, nA = impFilas.filter(x => x.est[0] === 'act').length, nO = impFilas.filter(x => x.est[0] === 'ofi').length, nG = impFilas.filter(x => x.est[0] === 'gest').length;
+    document.getElementById('impInfo').textContent = `${r.filas.length} centros en el Excel · ${nN} nuevos · ${nA} con fecha o técnico distintos · ${nO} ya revisados en oficina (no se añaden)${nG ? ` · ${nG} pendientes aquí que en oficina ya están revisados (se marcan completados)` : ''}. Por defecto se muestran los inspeccionados este mes; cambia la fecha para ver más.`;
     document.getElementById('impMsg').textContent = '';
     verImport(); document.getElementById('mImport').classList.add('on');
   }catch(err){ console.error(err); msg.textContent = '⚠ No he podido leer el Excel (¿tiene contraseña para abrirlo?).'; }
@@ -733,12 +747,19 @@ document.getElementById('impTodos').addEventListener('change', e => {
 document.getElementById('impFilas').addEventListener('change', e => { const i = e.target.dataset.imp; if (i !== undefined){ impFilas[+i].sel = e.target.checked; verImport(); } });
 document.getElementById('impOK').onclick = () => {
   const desde = document.getElementById('impDesde').value;
-  const sel = impFilas.filter(x => x.sel && (!desde || (x.d.fecha||'9999') >= desde) && (x.est[0] === 'nuevo' || x.est[0] === 'act'));
-  const r = { nuevo:0, completado:0, actualizado:0 };
-  sel.forEach(x => { const k = altaDesdeParte(x.d); if (r[k] !== undefined) r[k]++; });
+  const sel = impFilas.filter(x => x.sel && (!desde || (x.d.fecha||'9999') >= desde) && IMPORTABLE.includes(x.est[0]));
+  const r = { nuevo:0, completado:0, actualizado:0, gest:0 };
+  sel.forEach(x => {
+    if (x.est[0] === 'gest'){
+      const c = S.centros.find(c => normCD(c.numero) === normCD(x.d.numero) && !hecho(c));
+      if (c){ const t = Date.now(); pasosDe(c).forEach(p => { if (!c.pasos[p.id]) c.pasos[p.id] = t; }); if (x.d.fecha) c.fecha = x.d.fecha; r.gest++; }
+      return;
+    }
+    const k = altaDesdeParte(x.d); if (r[k] !== undefined) r[k]++;
+  });
   guardar(); cerrarImp(); if (vista==='done') setVista('pend'); else render(); syncInformes();
-  document.getElementById('msgPegar').textContent = `➕ ${r.nuevo} nuevos · 🔄 ${r.actualizado + r.completado} actualizados`;
-  toast(`${r.nuevo + r.actualizado + r.completado} centros del parte`);
+  document.getElementById('msgPegar').textContent = `➕ ${r.nuevo} nuevos · 🔄 ${r.actualizado + r.completado} actualizados` + (r.gest ? ` · ✓ ${r.gest} completados (revisados en oficina)` : '');
+  toast(`${r.nuevo + r.actualizado + r.completado + r.gest} centros del parte`);
 };
 
 // Da de alta (o completa uno creado desde la app del KMZ). Devuelve 'nuevo' | 'completado' | 'pendiente' | 'hecho'
