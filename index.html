@@ -284,7 +284,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -567,9 +567,9 @@ function provinciaDe(t){
 // Columnas que deja copiar el parte protegido de cada provincia ('-' = se ignora)
 const FORMATOS = {
   Badajoz: { cols:['linea','numero','-','provincia','-','tipo','fecha','operario','obs'],
-             txt:'Copia desde la columna Línea hasta Observaciones: Línea · Nº CD · Revisado LABT · Provincia · (vacía) · CD/PT · Fecha · Técnico · Observaciones' },
+             txt:'Copia desde la columna Línea hasta el técnico (y observaciones si las hay): Línea · Nº CD · Revisado LABT · Provincia · Tipo · Fecha · Técnico' },
   Sevilla: { cols:['numero','provincia','-','linea','tipo','fecha','operario','obs'],
-             txt:'Copia desde Nº de CT hasta Observaciones: Nº CT · Provincia · UO · DENOM_LINEA · CD/PT · Fecha · TC01 · Observaciones' }
+             txt:'Copia desde Nº de CT hasta el técnico (y observaciones si las hay): Nº CT · Provincia · UO · Línea · Tipo · Fecha · Técnico' }
 };
 function filaParte(o, provPorDefecto){
   const num = String(o.numero||'').trim().replace(/\.0+$/,'');
@@ -578,20 +578,36 @@ function filaParte(o, provPorDefecto){
            fecha:fechaISO(o.fecha), operario:String(o.operario||'').trim(), obs:String(o.obs||'').trim(),
            oficina:/^(SI|S|X|OK)$/.test(sinAc(o.oficina)) };
 }
+// Lee las filas copiadas del parte. Siempre vienen así (lo de entre corchetes puede no estar):
+//   Badajoz: LÍNEA · Nº CD · REVISADO LABT · PROVINCIA · [vacía] · TIPO · FECHA · TÉCNICO · [OBSERVACIONES]
+//   Sevilla: Nº CT · PROVINCIA · UO · DENOM_LINEA · TIPO · FECHA · TÉCNICO · [OBSERVACIONES]
+// La FECHA es el ancla: justo antes va el tipo y justo después el técnico; lo que siga son observaciones.
 function leerParte(texto){
-  const fmt = document.getElementById('selFormato').value, F = FORMATOS[fmt];
+  const fmt = document.getElementById('selFormato').value;
   const filas = [];
+  const esNumCD = x => /^[A-Za-z]?\d{2,7}$/.test(x||'');
+  const esProv = x => x && (PROVS_ES.includes(sinAc(x)) || S.provincias.some(q => sinAc(q.nombre) === sinAc(x)));
   String(texto||'').replace(/\r/g,'').split('\n').forEach(l => {
-    if (!l.includes('\t')) return;
-    const c = l.split('\t').map(x => x.trim()), o = {};
-    F.cols.forEach((k,i) => { if (k !== '-' && k !== 'obs') o[k] = c[i] || ''; });
-    const io = F.cols.indexOf('obs'); o.obs = c.slice(io).filter(Boolean).join(' · ');
-    const esNombre = x => /\p{L}{2}/u.test(x||'') && !/^(SI|NO|S|N|X|OK)$/.test(sinAc(x)) && !fechaISO(x);
-    if (!esNombre(o.operario)){
-      const iFe = F.cols.indexOf('fecha'), iT = c.findIndex((x,i) => i > iFe && esNombre(x));
-      o.operario = iT >= 0 ? c[iT] : '';
-      if (iT >= 0) o.obs = c.slice(iT+1).filter(x => x && !/^(SI|NO)$/i.test(sinAc(x))).join(' · ');
-    }
+    if (!l.trim()) return;
+    // Excel copia con tabuladores; si no los hay (texto pegado de otro sitio) se separa por espacios
+    let c = l.includes('\t') ? l.split('\t').map(x => x.trim()) : l.trim().split(/\s+/);
+    const conTab = l.includes('\t');
+    const iF = c.findIndex(x => fechaISO(x) && !esNumCD(x));
+    const iN = c.findIndex(esNumCD);
+    if (iF < 0 || iN < 0 || iN > iF) return;
+    const iP = c.findIndex(esProv);
+    const o = { numero:c[iN], provincia: iP >= 0 ? c[iP] : fmt, fecha:c[iF] };
+    // tipo: la celda con contenido justo antes de la fecha
+    let iT = iF - 1; while (iT > iN && !c[iT]) iT--;
+    o.tipo = iT > Math.max(iN, iP) ? c[iT] : '';
+    // técnico y observaciones: lo que va detrás de la fecha
+    const tras = c.slice(iF + 1).filter(Boolean);
+    if (conTab){ o.operario = tras[0] || ''; o.obs = tras.slice(1).join(' · '); }
+    else { o.operario = tras.join(' '); o.obs = ''; }
+    // línea: en Badajoz es lo que va antes del nº; en Sevilla, DENOM_LINEA (justo antes del tipo)
+    if (iN > 0) o.linea = c.slice(0, iN).filter(Boolean).join(' ');
+    else if (conTab) o.linea = iT - 1 > iP ? c[iT-1] : '';
+    else o.linea = iT - 1 > iP ? c[iT-1] : '';
     const d = filaParte(o, fmt); if (d) filas.push(d);
   });
   return filas;

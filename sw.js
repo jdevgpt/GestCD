@@ -1,4 +1,4 @@
-const CACHE = 'gestcd-v1.8.0';
+const CACHE = 'gestcd-v1.8.1';
 const FILES = ['./', './index.html', './manifest.json', './icon.svg', './icon-192.png', './icon-512.png', './centros.json', './vendor/jszip.min.js'];
 
 self.addEventListener('install', e => {
