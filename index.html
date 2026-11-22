@@ -201,12 +201,8 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
         <label class="btn" style="cursor:pointer">📂 Subir el Excel del parte<input type="file" id="fileParte" accept=".xlsx,.xlsm" hidden></label>
         <span class="hist">Lee las columnas por su título y te enseña lo nuevo antes de meterlo.</span>
       </div>
-      <div class="pegar-acc" style="margin-top:14px">
-        <label class="f" style="flex-direction:row;align-items:center;gap:8px">o pega filas del parte de
-          <select id="selFormato" style="width:auto"><option>Badajoz</option><option>Sevilla</option></select></label>
-      </div>
-      <div class="hist" id="txtFormato"></div>
-      <textarea id="tPegar" rows="3"></textarea>
+      <div class="hist" style="margin-top:14px">o copia filas del parte (desde la línea o el Nº de centro hasta el técnico) y pégalas aquí. Vale cualquier provincia: la fecha de inspección se usa como referencia y el técnico es lo que va detrás.</div>
+      <textarea id="tPegar" rows="3" placeholder="Pega aquí las filas del parte"></textarea>
       <div class="pegar-acc"><button class="btn sec" type="button" id="bPegar">＋ Añadir centros pegados</button><span class="msg" id="msgPegar"></span></div>
     </details>
     <div class="pista" id="pista"></div>
@@ -284,7 +280,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.8.2';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -564,13 +560,6 @@ function provinciaDe(t){
   toast(`Provincia ${nombre} añadida (puedes ajustar sus pasos en ⚙)`);
   return nombre;
 }
-// Columnas que deja copiar el parte protegido de cada provincia ('-' = se ignora)
-const FORMATOS = {
-  Badajoz: { cols:['linea','numero','-','provincia','-','tipo','fecha','operario','obs'],
-             txt:'Copia desde la columna Línea hasta el técnico (y observaciones si las hay): Línea · Nº CD · Revisado LABT · Provincia · Tipo · Fecha · Técnico' },
-  Sevilla: { cols:['numero','provincia','-','linea','tipo','fecha','operario','obs'],
-             txt:'Copia desde Nº de CT hasta el técnico (y observaciones si las hay): Nº CT · Provincia · UO · Línea · Tipo · Fecha · Técnico' }
-};
 function filaParte(o, provPorDefecto){
   const num = String(o.numero||'').trim().replace(/\.0+$/,'');
   if (!/^[A-Za-z]?\d{2,7}$/.test(num)) return null;
@@ -583,7 +572,7 @@ function filaParte(o, provPorDefecto){
 //   Sevilla: Nº CT · PROVINCIA · UO · DENOM_LINEA · TIPO · FECHA · TÉCNICO · [OBSERVACIONES]
 // La FECHA es el ancla: justo antes va el tipo y justo después el técnico; lo que siga son observaciones.
 function leerParte(texto){
-  const fmt = document.getElementById('selFormato').value;
+  const fmt = (localStorage.getItem(KEY+'_ultProv') || (S.provincias[0]||{}).nombre || '');   // si la fila no trae provincia
   const filas = [];
   const esNumCD = x => /^[A-Za-z]?\d{2,7}$/.test(x||'');
   const esProv = x => x && (PROVS_ES.includes(sinAc(x)) || S.provincias.some(q => sinAc(q.nombre) === sinAc(x)));
@@ -612,14 +601,6 @@ function leerParte(texto){
   });
   return filas;
 }
-const selFormato = document.getElementById('selFormato');
-try{ selFormato.value = localStorage.getItem(KEY+'_formato') || 'Badajoz'; }catch(_){}
-function verFormato(){
-  document.getElementById('txtFormato').textContent = FORMATOS[selFormato.value].txt;
-  document.getElementById('tPegar').placeholder = 'Pega aquí una o varias filas del parte de ' + selFormato.value + '. También puedes pegar una fila en «Nº centro».';
-}
-selFormato.addEventListener('change', () => { try{ localStorage.setItem(KEY+'_formato', selFormato.value); }catch(_){} verFormato(); });
-verFormato();
 
 /* ---------- Subir el Excel del parte: se leen las columnas por su título ---------- */
 async function leerXlsx(file){
@@ -735,7 +716,7 @@ document.getElementById('fileParte').addEventListener('change', async e => {
   if (/\.xls$/i.test(f.name)){ msg.textContent = '⚠ Es un .xls antiguo: ábrelo y guárdalo como .xlsx.'; return; }
   msg.textContent = 'Leyendo ' + f.name + '…';
   try{
-    const provDef = (S.provincias.find(p => sinAc(f.name).includes(sinAc(p.nombre))) || {}).nombre || selFormato.value;
+    const provDef = (S.provincias.find(p => sinAc(f.name).includes(sinAc(p.nombre))) || {}).nombre || (localStorage.getItem(KEY+'_ultProv') || (S.provincias[0]||{}).nombre || '');
     const r = filasDelExcel(await leerXlsx(f), provDef);
     if (!r.filas.length){ msg.textContent = '⚠ No encuentro la tabla del parte (busco columnas con título Nº CT/CD, Fecha y Técnico).'; return; }
     msg.textContent = '';
