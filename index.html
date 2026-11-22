@@ -190,7 +190,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
       <label class="f">Tipo<select id="iTipo"><option>CT</option><option selected>PT</option><option>ST</option></select></label>
       <label class="f">Operario de campo<input id="iOp" required list="dlOps" placeholder="Nombre"></label>
       <label class="f">Provincia<select id="iProv"></select></label>
-      <label class="f">Fecha recepción<input id="iFecha" type="date"></label>
+      <label class="f">Fecha inspección<input id="iFecha" type="date"></label>
       <button class="btn" type="submit">＋ Añadir</button>
     </form>
     <datalist id="dlOps"></datalist>
@@ -283,7 +283,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -480,7 +480,7 @@ function cardHTML(c){
       <span class="tag">👷 ${esc(c.operario)}</span>
       <span class="tag prov" style="background:${col}1F;color:${col}">${esc(c.provincia)}</span>
       ${veces>1?`<span class="tag rep" title="Este centro está ${veces} veces">⚠ Repetido ×${veces}</span>`:''}
-      ${c.fecha?`<span class="tag">📅 ${fmtF(c.fecha)}</span>`:''}
+      ${c.fecha?`<span class="tag" title="Fecha de inspección">📅 ${fmtF(c.fecha)}</span>`:''}
       ${done?`<span class="tag ok" data-act="abrir" data-id="${c.id}" style="cursor:pointer" title="Pulsa para cambiar la fecha de subida">☁ Subido ${fmtFull(c.pasos[FIN])}</span>`:''}
       <span class="sp"></span>
       <span class="hist">${nHechos}/${pasos.length}</span>
@@ -497,7 +497,7 @@ function cardHTML(c){
         <label class="f" style="flex:1;min-width:130px">Operario<input data-f="operario" value="${esc(c.operario)}" list="dlOps"></label>
         <label class="f" style="flex:0 1 90px">Tipo<select data-f="tipo">${['CT','PT','ST'].map(t=>`<option ${t===c.tipo?'selected':''}>${t}</option>`).join('')}</select></label>
         <label class="f" style="flex:1;min-width:120px">Provincia<select data-f="provincia">${S.provincias.map(p=>`<option ${p.nombre===c.provincia?'selected':''}>${esc(p.nombre)}</option>`).join('')}</select></label>
-        <label class="f" style="flex:1;min-width:120px">Fecha<input type="date" data-f="fecha" value="${esc(c.fecha||'')}"></label>
+        <label class="f" style="flex:1;min-width:120px">Fecha inspección<input type="date" data-f="fecha" value="${esc(c.fecha||'')}"></label>
         ${done?`<label class="f" style="flex:1;min-width:190px">Subido a SharePoint<input type="datetime-local" data-f="subida" value="${aLocal(c.pasos[FIN])}"></label>`:''}
       </div>
       ${hist?`<div class="hist">${hist}</div>`:''}
@@ -521,17 +521,19 @@ document.getElementById('iNum').addEventListener('input', () => { dupOK = null; 
 const sinAc = t => String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toUpperCase();
 const PROVS_ES = ['BADAJOZ','CACERES','SEVILLA','MALAGA','CORDOBA','JAEN','GRANADA','ALMERIA','HUELVA','CADIZ'];
 function fechaISO(v){
-  v = String(v||'').trim();
-  let m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
-  if (m){ const y = m[3].length===2 ? '20'+m[3] : m[3]; return `${y}-${String(m[2]).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`; }
-  if ((m = v.match(/^(\d{4})-(\d{2})-(\d{2})/))) return m[0];
+  v = String(v||'').trim().replace(/^[A-Za-zÁÉÍÓÚáéíóú]+,?\s+(?=\d)/, '');   // «lunes, 18/11/2026»
+  const iso = (y,mo,d) => (+mo >= 1 && +mo <= 12 && +d >= 1 && +d <= 31) ? `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}` : '';
+  let m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/);
+  if (m){ const y = m[3].length===2 ? '20'+m[3] : m[3]; return +m[2] > 12 && +m[1] <= 12 ? iso(y,m[1],m[2]) : iso(y,m[2],m[1]); }
+  if ((m = v.match(/^(\d{4})[\-\/.](\d{1,2})[\-\/.](\d{1,2})/))) return iso(m[1],m[2],m[3]);
+  if ((m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})$/))) return iso(new Date().getFullYear(), m[2], m[1]);   // 18/11 sin año
   // 18-nov-26 · 18 nov. 2026 · lunes, 18 de noviembre de 2026
   const MESES = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
   if ((m = sinAc(v).match(/(\d{1,2})[\s\-\/.]*(?:DE\s+)?([A-Z]{3})[A-Z.]*[\s\-\/.]*(?:DE\s+)?(\d{2,4})/))){
     let mes = MESES.indexOf(m[2] === 'SET' ? 'SEP' : m[2]);
     if (mes >= 0){ const y = m[3].length===2 ? '20'+m[3] : m[3]; return `${y}-${String(mes+1).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`; }
   }
-  if (/^\d{5}(\.\d+)?$/.test(v) && +v > 40000 && +v < 60000){ const d = new Date(Math.round((+v - 25569)*86400000)); return d.toISOString().slice(0,10); }
+  if (/^\d{5}([.,]\d+)?$/.test(v) && parseFloat(v.replace(',','.')) > 40000 && parseFloat(v.replace(',','.')) < 60000){ v = v.replace(',','.'); const d = new Date(Math.round((+v - 25569)*86400000)); return d.toISOString().slice(0,10); }
   return '';
 }
 const titulo = t => String(t||'').toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (a,b,c) => b + c.toUpperCase());
@@ -631,7 +633,8 @@ function campoDeTitulo(t){
   if (/DENOM.*LINEA/.test(h)) return 'linea!';
   if (/LINEA/.test(h)) return 'linea';
   if (/^(CDPT|PTCD|CTPT|TIPO)/.test(h)) return 'tipo';
-  if (/^FECHA/.test(h)) return /INSPEC|REVISION|CAMPO/.test(h) ? 'fecha!' : 'fecha';
+  if (/^(FECHA|FEC|F)(DE|DEL|LA)*(INSPEC|REVISION|CAMPO|VISITA|TRABAJO|EJEC)/.test(h)) return 'fecha!';
+  if (/^(FECHA|FEC)/.test(h) || h === 'DIA') return 'fecha';
   if (/TECNICO|^TC[O0]?1$|OPERARIO/.test(h)) return 'operario';
   if (/^OBSERV/.test(h)) return 'obs';
   return '';
@@ -669,7 +672,12 @@ function estadoEnGestCD(d){
     const cambia = (d.fecha && d.fecha !== pend.fecha) || (op && op !== pend.operario);
     return cambia ? ['act', 'Pendiente · se corrige fecha/técnico'] : ['igual', 'Pendiente · al día'];
   }
-  if (S.centros.some(c => normCD(c.numero) === n)) return ['hecho', 'Ya completado'];
+  const ya = S.centros.filter(c => normCD(c.numero) === n).sort((a,b) => b.creado - a.creado)[0];
+  if (ya){
+    const op = operarioDe(d.operario);
+    const cambia = (d.fecha && d.fecha !== ya.fecha) || (op && op !== ya.operario);
+    return cambia ? ['act', 'Completado · se corrige fecha/técnico'] : ['hecho', 'Completado · al día'];
+  }
   return ['nuevo', 'Nuevo'];
 }
 function verImport(){
@@ -748,7 +756,15 @@ function altaDesdeParte(d){
     Object.assign(pend, { operario:op, provincia:prov, tipo:d.tipo||pend.tipo, fecha:d.fecha||pend.fecha, linea:d.linea||pend.linea, notas:pend.notas||d.obs||'' });
     return 'completado';
   }
-  if (S.centros.some(c => normCD(c.numero) === n)) return 'hecho';
+  // ya completado: se corrige la fecha de inspección y el técnico del registro más reciente
+  const ya = S.centros.filter(c => normCD(c.numero) === n).sort((a,b) => b.creado - a.creado)[0];
+  if (ya){
+    const antes = JSON.stringify([ya.fecha, ya.operario, ya.tipo]);
+    if (d.fecha) ya.fecha = d.fecha;
+    if (d.operario) ya.operario = op;
+    if (d.tipo) ya.tipo = d.tipo;
+    return antes === JSON.stringify([ya.fecha, ya.operario, ya.tipo]) ? 'hecho' : 'actualizado';
+  }
   const inf = infoCD(n) || {};
   S.centros.push({id:uid(), numero:n, operario:op, provincia:prov, linea:d.linea||inf.linea||'', tipo:d.tipo||'PT', codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:d.fecha||hoyISO(), notas:d.obs||'', pasos:{}, creado:Date.now()});
   return 'nuevo';
@@ -766,8 +782,10 @@ document.getElementById('bPegar').addEventListener('click', () => {
   if (r.actualizado.length) t.push(`🔄 actualizados con la fecha/técnico del Excel: ${r.actualizado.join(', ')}`);
   const sinTec = filas.filter(d => !d.operario).map(d => d.numero);
   if (sinTec.length) t.push(`⚠ sin técnico en lo pegado: ${sinTec.join(', ')}`);
-  if (r.pendiente.length) t.push(`ya estaban pendientes: ${r.pendiente.join(', ')}`);
-  if (r.hecho.length) t.push(`ya completados antes (no se repiten; añádelos a mano si es una revisión nueva): ${r.hecho.join(', ')}`);
+  const sinF = filas.filter(d => !d.fecha).map(d => d.numero);
+  if (sinF.length) t.push(`⚠ no entiendo la fecha de inspección de: ${sinF.join(', ')} (se ha puesto la de hoy)`);
+  if (r.pendiente.length) t.push(`ya estaban y al día: ${r.pendiente.join(', ')}`);
+  if (r.hecho.length) t.push(`ya completados y al día: ${r.hecho.join(', ')}`);
   msg.textContent = t.join(' · ');
   if (r.nuevo.length || r.completado.length || r.actualizado.length){ document.getElementById('tPegar').value = ''; toast(`${r.nuevo.length + r.completado.length + r.actualizado.length} centro(s) del parte`); }
 });
@@ -969,7 +987,7 @@ document.getElementById('fileImp').onchange = async e => {
   e.target.value = '';
 };
 document.getElementById('bCSV').onclick = () => {
-  const cols = ['Nº centro','Línea','Tipo','Código','Dirección','Operario','Provincia','Fecha recepción', ...S.pasos.map(p=>p.nombre), 'Subido a SharePoint','Notas'];
+  const cols = ['Nº centro','Línea','Tipo','Código','Dirección','Operario','Provincia','Fecha inspección', ...S.pasos.map(p=>p.nombre), 'Subido a SharePoint','Notas'];
   const q = v => `"${String(v??'').replace(/"/g,'""')}"`;
   const filas = S.centros.map(c => {
     const aplica = pasosDe(c).map(p=>p.id);
