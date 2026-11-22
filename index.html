@@ -116,7 +116,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--naranja)}
 .extra .fila{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .extra .fila .sp{flex:1}
 .hist{font-size:12px;color:var(--gris-med);line-height:1.6}
-.nota-prev{font-size:13px;color:var(--gris-med);margin-top:8px;font-style:italic}
+.nota-prev{font-size:13px;color:var(--gris-med);margin-top:8px}
+.nota-prev b,.notas-ed b{color:var(--naranja-osc)}
+.notas-ed{border:1.5px solid var(--gris-claro);border-radius:10px;padding:9px 10px;min-height:60px;background:#fff;outline:none;line-height:1.45;white-space:pre-wrap}
+.notas-ed:focus{border-color:var(--naranja)}
+.notas-ed:empty:before{content:attr(data-ph);color:var(--gris-med)}
 .vacio{text-align:center;color:var(--gris-med);padding:30px 10px}
 
 /* Ajustes */
@@ -283,7 +287,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.9.1';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -335,6 +339,7 @@ let vista = 'pend';
 let abiertos = new Set();
 let borrarPend = null;
 let dupOK = null;
+let obsFormulario = null;   // observaciones de la fila pegada en «Nº centro»
 let mesSel = (() => { const d = new Date(); return {a:d.getFullYear(), m:d.getMonth()}; })();
 let filtroMes = null; // {a,m} cuando se filtran los completados por mes
 const nombreMes = ({a,m}) => { const t = new Date(a, m, 1).toLocaleDateString('es-ES', {month:'long'}); return t[0].toUpperCase() + t.slice(1) + ' ' + a; };
@@ -441,13 +446,13 @@ function render(){
   const pend = {};
   cont.querySelectorAll('.card.editando').forEach(card => {
     const id = card.querySelector('[data-act=guardarDet]').dataset.id; pend[id] = {};
-    card.querySelectorAll('[data-f]').forEach(el => pend[id][el.dataset.f] = el.value);
+    card.querySelectorAll('[data-f]').forEach(el => pend[id][el.dataset.f] = valorCampo(el));
   });
   cont.innerHTML = l.map(cardHTML).join('');
   Object.entries(pend).forEach(([id, vals]) => {
     const btn = cont.querySelector(`[data-act=guardarDet][data-id="${id}"]`); if (!btn) return;
     const card = btn.closest('.card');
-    Object.entries(vals).forEach(([k, v]) => { const el = card.querySelector(`[data-f="${k}"]`); if (el) el.value = v; });
+    Object.entries(vals).forEach(([k, v]) => { const el = card.querySelector(`[data-f="${k}"]`); if (!el) return; if (el.isContentEditable) el.innerHTML = notasHTML(v); else el.value = v; });
     card.classList.add('editando'); btn.disabled = false;
   });
 }
@@ -494,9 +499,9 @@ function cardHTML(c){
       <button class="btn sec" data-act="elegirLinea" data-id="${c.id}" data-v="bd">${esc(c.dudaLinea.bd)} <small>(base de datos)</small></button></div>` : ''}
     <div class="prog"><i style="width:${pct}%"></i></div>
     <div class="pasos">${chips}</div>
-    ${!ab && c.notas ? `<div class="nota-prev">📝 ${esc(c.notas.length>90?c.notas.slice(0,90)+'…':c.notas)}</div>`:''}
+    ${!ab && c.notas ? `<div class="nota-prev">📝 ${notasHTML(c.notas.length>140?c.notas.slice(0,140)+'…':c.notas)}</div>`:''}
     <div class="extra">
-      <textarea data-f="notas" placeholder="Notas (incidencias, qué falta, etc.)">${esc(c.notas||'')}</textarea>
+      <div class="notas-ed" contenteditable="true" data-f="notas" data-ph="Notas (incidencias, qué falta, etc.)">${notasHTML(c.notas||'')}</div>
       <div class="fila">
         <label class="f" style="flex:1;min-width:130px">Operario<input data-f="operario" value="${esc(c.operario)}" list="dlOps"></label>
         <label class="f" style="flex:0 1 90px">Tipo<select data-f="tipo">${['CT','PT','ST'].map(t=>`<option ${t===c.tipo?'selected':''}>${t}</option>`).join('')}</select></label>
@@ -599,7 +604,15 @@ function leerParte(texto){
     // técnico y observaciones: lo que va detrás de la fecha
     const tras = c.slice(iF + 1).filter(Boolean);
     if (conTab){ o.operario = tras[0] || ''; o.obs = tras.slice(1).join(' · '); }
-    else { o.operario = tras.join(' '); o.obs = ''; }
+    else {
+      // sin tabuladores: el técnico es un operario ya conocido o las palabras en MAYÚSCULAS; lo demás, observaciones
+      const txt = tras.join(' ');
+      const conocido = [...new Set(S.centros.map(x => x.operario))].filter(Boolean).sort((a,b) => b.length - a.length)
+        .find(op => sinAc(txt).startsWith(sinAc(op) + ' ') || sinAc(txt) === sinAc(op));
+      let n = conocido ? conocido.split(/\s+/).length : tras.findIndex(w => /\p{Ll}/u.test(w));
+      if (n < 0) n = tras.length;
+      o.operario = tras.slice(0, n).join(' '); o.obs = tras.slice(n).join(' ');
+    }
     // línea: en Badajoz es lo que va antes del nº; en Sevilla, DENOM_LINEA (justo antes del tipo)
     if (iN > 0) o.linea = c.slice(0, iN).filter(Boolean).join(' ');
     else if (conTab) o.linea = iT - 1 > iP ? c[iT-1] : '';
@@ -767,6 +780,17 @@ document.getElementById('impOK').onclick = () => {
 };
 
 // Da de alta (o completa uno creado desde la app del KMZ). Devuelve 'nuevo' | 'completado' | 'pendiente' | 'hecho'
+/* ---------- Notas de campo (observaciones del parte) ---------- */
+const PREF_CAMPO = 'NOTAS DE CAMPO:';
+function conNotaCampo(notas, obs){
+  obs = String(obs||'').trim(); notas = String(notas||'');
+  if (!obs || sinAc(notas).includes(sinAc(obs))) return notas;
+  const l = PREF_CAMPO + ' ' + obs;
+  return notas ? l + '\n' + notas : l;
+}
+// Las notas se guardan como texto; «NOTAS DE CAMPO:» se pinta en negrita
+const notasHTML = t => esc(t).replace(/^(NOTAS DE CAMPO:)/gm, '<b>$1</b>').replace(/\n/g, '<br>');
+
 /* ---------- Comprobación de la línea con la base de centros ---------- */
 // En la base las líneas van recortadas (p. ej. CRTA_SEVIL), así que vale si una empieza como la otra
 const claveLin = t => sinAc(t).replace(/[^A-Z0-9]/g, '');
@@ -796,24 +820,25 @@ function altaDesdeParte(d){
       if (d.tipo) pend.tipo = d.tipo;
       if (d.linea && pend.linea !== d.linea && !(pend.dudaLinea === undefined && pend.lineaElegida)) revisarLinea(pend, d.linea);
       if (d.operario) pend.operario = op;
-      if (!pend.notas && d.obs) pend.notas = d.obs;
+      pend.notas = conNotaCampo(pend.notas, d.obs);
       return antes === JSON.stringify([pend.fecha, pend.operario, pend.notas, pend.tipo, pend.linea]) ? 'pendiente' : 'actualizado';
     }
-    Object.assign(pend, { operario:op, provincia:prov, tipo:d.tipo||pend.tipo, fecha:d.fecha||pend.fecha, notas:pend.notas||d.obs||'' });
+    Object.assign(pend, { operario:op, provincia:prov, tipo:d.tipo||pend.tipo, fecha:d.fecha||pend.fecha, notas:conNotaCampo(pend.notas, d.obs) });
     if (d.linea) revisarLinea(pend, d.linea);
     return 'completado';
   }
   // ya completado: se corrige la fecha de inspección y el técnico del registro más reciente
   const ya = S.centros.filter(c => normCD(c.numero) === n).sort((a,b) => b.creado - a.creado)[0];
   if (ya){
-    const antes = JSON.stringify([ya.fecha, ya.operario, ya.tipo]);
+    const antes = JSON.stringify([ya.fecha, ya.operario, ya.tipo, ya.notas]);
+    ya.notas = conNotaCampo(ya.notas, d.obs);
     if (d.fecha) ya.fecha = d.fecha;
     if (d.operario) ya.operario = op;
     if (d.tipo) ya.tipo = d.tipo;
-    return antes === JSON.stringify([ya.fecha, ya.operario, ya.tipo]) ? 'hecho' : 'actualizado';
+    return antes === JSON.stringify([ya.fecha, ya.operario, ya.tipo, ya.notas]) ? 'hecho' : 'actualizado';
   }
   const inf = infoCD(n) || {};
-  const nuevo = {id:uid(), numero:n, operario:op, provincia:prov, linea:'', tipo:d.tipo||'PT', codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:d.fecha||hoyISO(), notas:d.obs||'', pasos:{}, creado:Date.now()};
+  const nuevo = {id:uid(), numero:n, operario:op, provincia:prov, linea:'', tipo:d.tipo||'PT', codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:d.fecha||hoyISO(), notas:conNotaCampo('', d.obs), pasos:{}, creado:Date.now()};
   revisarLinea(nuevo, d.linea);
   S.centros.push(nuevo);
   return 'nuevo';
@@ -849,6 +874,7 @@ document.getElementById('iNum').addEventListener('paste', e => {
   e.preventDefault();
   if (filas.length > 1){ const dp = document.getElementById('dPegar'); dp.open = true; document.getElementById('tPegar').value = t; document.getElementById('msgPegar').textContent = `${filas.length} filas: pulsa «Añadir centros pegados».`; return; }
   const d = filas[0];
+  obsFormulario = { numero:normCD(d.numero), obs:d.obs };
   document.getElementById('iNum').value = d.numero; pista();
   document.getElementById('iTipo').value = d.tipo;
   if (d.operario) document.getElementById('iOp').value = operarioDe(d.operario);
@@ -880,7 +906,8 @@ document.getElementById('fNuevo').addEventListener('submit', e => {
   }
   dupOK = null; msg.textContent = '';
   const inf = infoCD(num) || {};
-  S.centros.push({id:uid(), numero:num, operario:op, provincia:prov, linea:inf.linea||'', tipo:document.getElementById('iTipo').value, codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:document.getElementById('iFecha').value, notas:'', pasos:{}, creado:Date.now()});
+  S.centros.push({id:uid(), numero:num, operario:op, provincia:prov, linea:inf.linea||'', tipo:document.getElementById('iTipo').value, codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:document.getElementById('iFecha').value, notas:(obsFormulario && obsFormulario.numero === normCD(num)) ? conNotaCampo('', obsFormulario.obs) : '', pasos:{}, creado:Date.now()});
+  obsFormulario = null;
   localStorage.setItem(KEY+'_ultProv', prov);
   guardar();
   document.getElementById('iNum').value = ''; pista();
@@ -946,8 +973,9 @@ function marcarEdicion(e){
 }
 lista.addEventListener('input', marcarEdicion);
 lista.addEventListener('change', marcarEdicion);
+const valorCampo = el => el.isContentEditable ? el.innerText.replace(/\u00a0/g,' ').replace(/\n{3,}/g,'\n\n').trim() : el.value;
 function guardarDetalles(c, card){
-  const v = k => { const el = card.querySelector(`[data-f="${k}"]`); return el ? el.value : null; };
+  const v = k => { const el = card.querySelector(`[data-f="${k}"]`); return el ? valorCampo(el) : null; };
   const op = (v('operario')||'').trim();
   if (!op) return toast('Pon el nombre del operario');
   const sub = v('subida');
