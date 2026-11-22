@@ -251,7 +251,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '1.6.2';
+const APP_VERSION = '1.6.3';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -499,7 +499,7 @@ function fechaISO(v){
     let mes = MESES.indexOf(m[2] === 'SET' ? 'SEP' : m[2]);
     if (mes >= 0){ const y = m[3].length===2 ? '20'+m[3] : m[3]; return `${y}-${String(mes+1).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`; }
   }
-  if (/^\d{5}(\.\d+)?$/.test(v)){ const d = new Date(Math.round((+v - 25569)*86400000)); return d.toISOString().slice(0,10); }
+  if (/^\d{5}(\.\d+)?$/.test(v) && +v > 40000 && +v < 60000){ const d = new Date(Math.round((+v - 25569)*86400000)); return d.toISOString().slice(0,10); }
   return '';
 }
 const titulo = t => String(t||'').toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (a,b,c) => b + c.toUpperCase());
@@ -536,16 +536,21 @@ function leerParte(texto){
     const esNum = x => /^\d{2,7}$/.test(x||'');
     const num = esNum(c[p-2]) ? c[p-2] : esNum(c[p-1]) ? c[p-1] : '';
     if (!num) return;
-    const linea = [c[p+2], /^(SI|NO)$/i.test(c[p-1]) ? '' : c[p-1], /^\d+$/.test(c[p-3]||'') ? '' : c[p-3]].find(x => x && !/^\d+$/.test(x)) || '';
-    // Tras PROVINCIA · UO · DENOM_LINEA vienen CD/PT, FECHA, TC01 y OBSERVACIONES, pero en algunos
-    // partes hay columnas de más (p. ej. «revisado LABT»), así que se buscan por su contenido
-    const resto = c.slice(p+3);
+    // Formatos al copiar del parte protegido:
+    //   Sevilla: NºCT · PROVINCIA · UO · DENOM_LINEA · CD/PT · FECHA · TC01 · OBSERVACIONES
+    //   Badajoz: LÍNEA · NºCD · REVISADO LABT · PROVINCIA · (vacía) · CD/PT · FECHA · TÉCNICO · OBSERVACIONES
+    const sevilla = num === c[p-1] && !esNum(c[p-2]);
+    const txt = x => x && /\p{L}{2}/u.test(x) && !/^(SI|NO|X|OK)$/i.test(sinAc(x));
+    const linea = sevilla ? (c[p+2] || '') : ([c[p-3], c[p-1], c[p+2]].find(x => txt(x) && !fechaISO(x) && !/\b(PT|CT|CD|ST)\b/i.test(x)) || '');
+    // tras PROVINCIA: la FECHA es la primera celda con fecha, el tipo va justo antes y el técnico justo después
+    const resto = c.slice(sevilla ? p+3 : p+1);
     const iF = resto.findIndex(x => fechaISO(x));
-    const tipoTxt = (iF > 0 ? resto.slice(0, iF) : resto.slice(0,1)).find(x => /\b(PT|CT|CD|ST)\b|INTEMP|POSTE|SUBT|CASETA|LOCAL/i.test(x)) || resto[0] || '';
-    const tras = iF >= 0 ? resto.slice(iF+1) : resto.slice(2);
-    const iO = tras.findIndex(x => /\p{L}{2}/u.test(x) && !/^(SI|NO|S|N|X|OK|REVISADO)$/i.test(sinAc(x)) && !fechaISO(x));
+    const esTipo = x => /\b(PT|CT|CD|ST)\b|INTEMP|POSTE|SUBT|CASETA|LOCAL/i.test(x||'');
+    const tipoTxt = iF > 0 && esTipo(resto[iF-1]) ? resto[iF-1] : (resto.slice(0, iF > 0 ? iF : resto.length).find(esTipo) || '');
+    const tras = iF >= 0 ? resto.slice(iF+1) : [];
+    const iO = tras.findIndex(x => txt(x) && !fechaISO(x));
     filas.push({ numero:num, provincia:c[p], tipo:tipoDe(tipoTxt), fecha:iF >= 0 ? fechaISO(resto[iF]) : '',
-      operario: iO >= 0 ? tras[iO] : '', obs: iO >= 0 ? tras.slice(iO+1).filter(x => x && !/^(SI|NO|X)$/i.test(x) && !fechaISO(x)).join(' · ') : '', linea });
+      operario: iO >= 0 ? tras[iO] : '', obs: iO >= 0 ? tras.slice(iO+1).filter(Boolean).join(' · ') : '', linea });
   });
   return filas;
 }
