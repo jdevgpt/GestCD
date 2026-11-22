@@ -131,6 +131,15 @@ input:focus,select:focus,textarea:focus{border-color:var(--naranja)}
 .paso-row input{flex:1}
 
 /* Aviso actualización */
+.imp-tabla{max-height:55vh;overflow:auto;border:1.5px solid var(--gris-claro);border-radius:12px;margin:10px 0}
+.imp-tabla table{border-collapse:collapse;width:100%;font-size:13px}
+.imp-tabla th{position:sticky;top:0;background:var(--gris-fondo);text-align:left;padding:7px 8px;font-size:12px;color:var(--gris-med)}
+.imp-tabla td{padding:6px 8px;border-top:1px solid var(--gris-claro);white-space:nowrap}
+.imp-tabla input{width:auto}
+.est{font-size:12px;padding:2px 8px;border-radius:20px;font-weight:600}
+.est.nuevo{background:var(--naranja-claro);color:var(--naranja-osc)}
+.est.act{background:#e6f0fb;color:#2F7FD1}
+.est.igual,.est.hecho{background:var(--gris-fondo);color:var(--gris-med)}
 #upd{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--gris);color:#fff;padding:10px 12px 10px 16px;border-radius:12px;display:none;align-items:center;gap:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:60}
 #upd.on{display:flex}
 #toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:var(--gris);color:#fff;padding:9px 14px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:70}
@@ -186,9 +195,18 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
     </form>
     <datalist id="dlOps"></datalist>
     <details class="pegar" id="dPegar">
-      <summary>📋 Pegar filas del parte diario (Excel de Badajoz o Sevilla)</summary>
-      <textarea id="tPegar" rows="3" placeholder="Selecciona en el Excel las celdas desde Nº de CT hasta Observaciones (en Badajoz desde el nombre de la línea), de una o varias filas, cópialas y pégalas aquí. También puedes pegar una fila directamente en «Nº centro»."></textarea>
-      <div class="pegar-acc"><button class="btn" type="button" id="bPegar">＋ Añadir centros pegados</button><span class="msg" id="msgPegar"></span></div>
+      <summary>📋 Importar del parte diario (Excel)</summary>
+      <div class="pegar-acc">
+        <label class="btn" style="cursor:pointer">📂 Subir el Excel del parte<input type="file" id="fileParte" accept=".xlsx,.xlsm" hidden></label>
+        <span class="hist">Lee las columnas por su título y te enseña lo nuevo antes de meterlo.</span>
+      </div>
+      <div class="pegar-acc" style="margin-top:14px">
+        <label class="f" style="flex-direction:row;align-items:center;gap:8px">o pega filas del parte de
+          <select id="selFormato" style="width:auto"><option>Badajoz</option><option>Sevilla</option></select></label>
+      </div>
+      <div class="hist" id="txtFormato"></div>
+      <textarea id="tPegar" rows="3"></textarea>
+      <div class="pegar-acc"><button class="btn sec" type="button" id="bPegar">＋ Añadir centros pegados</button><span class="msg" id="msgPegar"></span></div>
     </details>
     <div class="pista" id="pista"></div>
     <div class="msg" id="msgNuevo"></div>
@@ -247,11 +265,25 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
   </div>
 </div>
 
+<div class="modal" id="mImport">
+  <div class="caja" style="max-width:900px">
+    <div style="display:flex;align-items:center;gap:8px"><h3 style="flex:1" id="impTitulo">Importar parte diario</h3><button class="mini" id="impCerrar">✕</button></div>
+    <div class="hist" id="impInfo"></div>
+    <div class="pegar-acc">
+      <label class="f" style="flex-direction:row;align-items:center;gap:8px">Inspeccionados desde <input type="date" id="impDesde" style="width:auto"></label>
+      <label class="chk"><input type="checkbox" id="impSoloNuevos" checked> Ocultar los que ya están al día</label>
+    </div>
+    <div class="imp-tabla"><table><thead><tr><th><input type="checkbox" id="impTodos" checked></th><th>Nº</th><th>Provincia</th><th>Línea</th><th>Tipo</th><th>Inspección</th><th>Técnico</th><th>En GestCD</th></tr></thead><tbody id="impFilas"></tbody></table></div>
+    <div class="pegar-acc" style="justify-content:flex-end"><span class="msg" id="impMsg" style="flex:1"></span><button class="btn sec" id="impCancelar">Cancelar</button><button class="btn" id="impOK">Importar</button></div>
+  </div>
+</div>
+
 <div id="upd"><span>Hay una versión nueva</span><button class="btn" id="bUpd">Actualizar</button></div>
 <div id="toast"></div>
 
+<script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.6.3';
+const APP_VERSION = '1.7.0';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -524,36 +556,178 @@ function provinciaDe(t){
   toast(`Provincia ${nombre} añadida (puedes ajustar sus pasos en ⚙)`);
   return nombre;
 }
+// Columnas que deja copiar el parte protegido de cada provincia ('-' = se ignora)
+const FORMATOS = {
+  Badajoz: { cols:['linea','numero','-','provincia','-','tipo','fecha','operario','obs'],
+             txt:'Copia desde la columna Línea hasta Observaciones: Línea · Nº CD · Revisado LABT · Provincia · (vacía) · CD/PT · Fecha · Técnico · Observaciones' },
+  Sevilla: { cols:['numero','provincia','-','linea','tipo','fecha','operario','obs'],
+             txt:'Copia desde Nº de CT hasta Observaciones: Nº CT · Provincia · UO · DENOM_LINEA · CD/PT · Fecha · TC01 · Observaciones' }
+};
+function filaParte(o, provPorDefecto){
+  const num = String(o.numero||'').trim().replace(/\.0+$/,'');
+  if (!/^[A-Za-z]?\d{2,7}$/.test(num)) return null;
+  return { numero:num, provincia:o.provincia || provPorDefecto, linea:String(o.linea||'').trim(), tipo:String(o.tipo||'').trim() ? tipoDe(o.tipo) : '',
+           fecha:fechaISO(o.fecha), operario:String(o.operario||'').trim(), obs:String(o.obs||'').trim() };
+}
 function leerParte(texto){
+  const fmt = document.getElementById('selFormato').value, F = FORMATOS[fmt];
   const filas = [];
   String(texto||'').replace(/\r/g,'').split('\n').forEach(l => {
     if (!l.includes('\t')) return;
-    const c = l.split('\t').map(x => x.trim());
-    const p = c.findIndex(x => PROVS_ES.includes(sinAc(x)) || S.provincias.some(q => sinAc(q.nombre) === sinAc(x) && x));
-    if (p < 1) return;
-    // Nº CT: dos columnas antes de PROVINCIA (Badajoz, con «revisado LABT» en medio, o fila entera)
-    // o justo antes (Sevilla copiando solo las columnas que deja la hoja protegida)
-    const esNum = x => /^\d{2,7}$/.test(x||'');
-    const num = esNum(c[p-2]) ? c[p-2] : esNum(c[p-1]) ? c[p-1] : '';
-    if (!num) return;
-    // Formatos al copiar del parte protegido:
-    //   Sevilla: NºCT · PROVINCIA · UO · DENOM_LINEA · CD/PT · FECHA · TC01 · OBSERVACIONES
-    //   Badajoz: LÍNEA · NºCD · REVISADO LABT · PROVINCIA · (vacía) · CD/PT · FECHA · TÉCNICO · OBSERVACIONES
-    const sevilla = num === c[p-1] && !esNum(c[p-2]);
-    const txt = x => x && /\p{L}{2}/u.test(x) && !/^(SI|NO|X|OK)$/i.test(sinAc(x));
-    const linea = sevilla ? (c[p+2] || '') : ([c[p-3], c[p-1], c[p+2]].find(x => txt(x) && !fechaISO(x) && !/\b(PT|CT|CD|ST)\b/i.test(x)) || '');
-    // tras PROVINCIA: la FECHA es la primera celda con fecha, el tipo va justo antes y el técnico justo después
-    const resto = c.slice(sevilla ? p+3 : p+1);
-    const iF = resto.findIndex(x => fechaISO(x));
-    const esTipo = x => /\b(PT|CT|CD|ST)\b|INTEMP|POSTE|SUBT|CASETA|LOCAL/i.test(x||'');
-    const tipoTxt = iF > 0 && esTipo(resto[iF-1]) ? resto[iF-1] : (resto.slice(0, iF > 0 ? iF : resto.length).find(esTipo) || '');
-    const tras = iF >= 0 ? resto.slice(iF+1) : [];
-    const iO = tras.findIndex(x => txt(x) && !fechaISO(x));
-    filas.push({ numero:num, provincia:c[p], tipo:tipoDe(tipoTxt), fecha:iF >= 0 ? fechaISO(resto[iF]) : '',
-      operario: iO >= 0 ? tras[iO] : '', obs: iO >= 0 ? tras.slice(iO+1).filter(Boolean).join(' · ') : '', linea });
+    const c = l.split('\t').map(x => x.trim()), o = {};
+    F.cols.forEach((k,i) => { if (k !== '-' && k !== 'obs') o[k] = c[i] || ''; });
+    const io = F.cols.indexOf('obs'); o.obs = c.slice(io).filter(Boolean).join(' · ');
+    const d = filaParte(o, fmt); if (d) filas.push(d);
   });
   return filas;
 }
+const selFormato = document.getElementById('selFormato');
+try{ selFormato.value = localStorage.getItem(KEY+'_formato') || 'Badajoz'; }catch(_){}
+function verFormato(){
+  document.getElementById('txtFormato').textContent = FORMATOS[selFormato.value].txt;
+  document.getElementById('tPegar').placeholder = 'Pega aquí una o varias filas del parte de ' + selFormato.value + '. También puedes pegar una fila en «Nº centro».';
+}
+selFormato.addEventListener('change', () => { try{ localStorage.setItem(KEY+'_formato', selFormato.value); }catch(_){} verFormato(); });
+verFormato();
+
+/* ---------- Subir el Excel del parte: se leen las columnas por su título ---------- */
+async function leerXlsx(file){
+  const zip = await JSZip.loadAsync(file);
+  const xml = async p => { const f = zip.file(p); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
+  const tags = (n, t) => [...n.getElementsByTagNameNS('*', t)];
+  const ss = [];
+  const sx = await xml('xl/sharedStrings.xml');
+  if (sx) tags(sx, 'si').forEach(si => ss.push(tags(si, 't').map(t => t.textContent).join('')));
+  const wb = await xml('xl/workbook.xml'), rels = await xml('xl/_rels/workbook.xml.rels');
+  const destino = {}; tags(rels, 'Relationship').forEach(r => destino[r.getAttribute('Id')] = r.getAttribute('Target'));
+  const hojas = [];
+  for (const h of tags(wb, 'sheet')){
+    const rid = h.getAttribute('r:id') || h.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+    let t = destino[rid] || ''; t = t.startsWith('/') ? t.slice(1) : 'xl/' + t.replace(/^\.\//, '');
+    const d = await xml(t); if (!d) continue;
+    const filas = [];
+    tags(d, 'row').forEach(row => {
+      const f = [];
+      tags(row, 'c').forEach(c => {
+        const ref = c.getAttribute('r') || '', letras = ref.replace(/\d+/g, '');
+        let col = 0; for (const ch of letras) col = col*26 + ch.charCodeAt(0) - 64;
+        const tipo = c.getAttribute('t'), v = tags(c, 'v')[0];
+        let val = tipo === 's' ? (ss[+(v && v.textContent)] ?? '') : tipo === 'inlineStr' ? tags(c, 't').map(x => x.textContent).join('') : (v ? v.textContent : '');
+        f[col-1] = String(val).trim();
+      });
+      filas[(+row.getAttribute('r') || filas.length+1) - 1] = f;
+    });
+    hojas.push({ nombre:h.getAttribute('name'), filas:filas.map(f => f || []) });
+  }
+  return hojas;
+}
+// Reconoce cada columna por su título, esté donde esté
+function campoDeTitulo(t){
+  const h = sinAc(t).replace(/[^A-Z0-9]/g, '');
+  if (!h) return '';
+  if (/REVIS/.test(h)) return '-';
+  if (/^(N|NO|NUM|NUMERO)(DE|DEL)?(CT|CD|PT|CENTRO)$/.test(h) || /^(CT|CD|CENTRO)$/.test(h)) return 'numero';
+  if (/PROVINCIA/.test(h)) return 'provincia';
+  if (/DENOM.*LINEA/.test(h)) return 'linea!';
+  if (/LINEA/.test(h)) return 'linea';
+  if (/^(CDPT|PTCD|CTPT|TIPO)/.test(h)) return 'tipo';
+  if (/^FECHA/.test(h)) return /INSPEC|REVISION|CAMPO/.test(h) ? 'fecha!' : 'fecha';
+  if (/TECNICO|^TC[O0]?1$|OPERARIO/.test(h)) return 'operario';
+  if (/^OBSERV/.test(h)) return 'obs';
+  return '';
+}
+function filasDelExcel(hojas, provPorDefecto){
+  const out = {}; let leidas = 0;
+  hojas.forEach(h => {
+    for (let r = 0; r < Math.min(40, h.filas.length); r++){
+      const mapa = {};
+      (h.filas[r] || []).forEach((t, i) => {
+        const k = campoDeTitulo(t); if (!k || k === '-') return;
+        const base = k.replace('!', '');
+        if (mapa[base] === undefined || (k.endsWith('!') && !mapa[base+'!'])){ mapa[base] = i; if (k.endsWith('!')) mapa[base+'!'] = true; }
+      });
+      if (mapa.numero === undefined || (mapa.fecha === undefined && mapa.operario === undefined)) continue;
+      for (let k = r+1; k < h.filas.length; k++){
+        const f = h.filas[k] || [], o = {};
+        ['numero','provincia','linea','tipo','fecha','operario','obs'].forEach(c => { if (mapa[c] !== undefined) o[c] = f[mapa[c]]; });
+        const d = filaParte(o, provPorDefecto); if (!d) continue;
+        leidas++;
+        const n = normCD(d.numero);
+        if (!out[n] || (d.fecha || '') >= (out[n].fecha || '')) out[n] = d;   // si sale varias veces, la inspección más reciente
+      }
+      break;
+    }
+  });
+  return { filas:Object.values(out), leidas };
+}
+let impFilas = [];
+function estadoEnGestCD(d){
+  const n = normCD(d.numero);
+  const pend = S.centros.find(c => normCD(c.numero) === n && !hecho(c));
+  if (pend){
+    const op = operarioDe(d.operario);
+    const cambia = (d.fecha && d.fecha !== pend.fecha) || (op && op !== pend.operario);
+    return cambia ? ['act', 'Pendiente · se corrige fecha/técnico'] : ['igual', 'Pendiente · al día'];
+  }
+  if (S.centros.some(c => normCD(c.numero) === n)) return ['hecho', 'Ya completado'];
+  return ['nuevo', 'Nuevo'];
+}
+function verImport(){
+  const desde = document.getElementById('impDesde').value, solo = document.getElementById('impSoloNuevos').checked;
+  const vis = impFilas.filter(x => (!desde || (x.d.fecha || '9999') >= desde) && (!solo || x.est[0] === 'nuevo' || x.est[0] === 'act'));
+  vis.sort((a,b) => (a.d.fecha||'').localeCompare(b.d.fecha||'') || a.d.numero.localeCompare(b.d.numero, 'es', {numeric:true}));
+  document.getElementById('impFilas').innerHTML = vis.length ? vis.map(x => {
+    const ok = x.est[0] === 'nuevo' || x.est[0] === 'act';
+    return `<tr><td><input type="checkbox" data-imp="${x.i}" ${ok && x.sel ? 'checked' : ''} ${ok ? '' : 'disabled'}></td>
+      <td><b>${esc(x.d.numero)}</b></td><td>${esc(titulo(x.d.provincia))}</td><td>${esc(x.d.linea)}</td><td>${esc(x.d.tipo)}</td>
+      <td>${fmtF(x.d.fecha) || '<span style="color:var(--rojo)">sin fecha</span>'}</td><td>${esc(operarioDe(x.d.operario)) || '<span style="color:var(--rojo)">sin técnico</span>'}</td>
+      <td><span class="est ${x.est[0]}">${x.est[1]}</span></td></tr>`; }).join('')
+    : '<tr><td colspan="8" class="vacio">No hay centros nuevos en esas fechas</td></tr>';
+  const n = impFilas.filter(x => x.sel && vis.includes(x) && (x.est[0] === 'nuevo' || x.est[0] === 'act')).length;
+  const b = document.getElementById('impOK'); b.textContent = `Importar ${n} centro${n===1?'':'s'}`; b.disabled = !n;
+}
+document.getElementById('fileParte').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const msg = document.getElementById('msgPegar');
+  if (/\.xls$/i.test(f.name)){ msg.textContent = '⚠ Es un .xls antiguo: ábrelo y guárdalo como .xlsx.'; return; }
+  msg.textContent = 'Leyendo ' + f.name + '…';
+  try{
+    const provDef = (S.provincias.find(p => sinAc(f.name).includes(sinAc(p.nombre))) || {}).nombre || selFormato.value;
+    const r = filasDelExcel(await leerXlsx(f), provDef);
+    if (!r.filas.length){ msg.textContent = '⚠ No encuentro la tabla del parte (busco columnas con título Nº CT/CD, Fecha y Técnico).'; return; }
+    msg.textContent = '';
+    impFilas = r.filas.map((d, i) => ({ i, d, est:estadoEnGestCD(d), sel:true }));
+    const d0 = new Date(); d0.setDate(1);
+    document.getElementById('impDesde').value = hoyISO().slice(0,8) + '01';
+    document.getElementById('impTitulo').textContent = 'Importar · ' + f.name;
+    const nN = impFilas.filter(x => x.est[0] === 'nuevo').length, nA = impFilas.filter(x => x.est[0] === 'act').length;
+    document.getElementById('impInfo').textContent = `${r.filas.length} centros en el Excel · ${nN} nuevos · ${nA} pendientes con fecha o técnico distintos. Por defecto se muestran los inspeccionados este mes; cambia la fecha para ver más.`;
+    document.getElementById('impMsg').textContent = '';
+    verImport(); document.getElementById('mImport').classList.add('on');
+  }catch(err){ console.error(err); msg.textContent = '⚠ No he podido leer el Excel (¿tiene contraseña para abrirlo?).'; }
+});
+const mI = document.getElementById('mImport');
+const cerrarImp = () => mI.classList.remove('on');
+document.getElementById('impCerrar').onclick = cerrarImp;
+document.getElementById('impCancelar').onclick = cerrarImp;
+mI.addEventListener('click', e => { if (e.target === mI) cerrarImp(); });
+document.getElementById('impDesde').addEventListener('change', verImport);
+document.getElementById('impSoloNuevos').addEventListener('change', verImport);
+document.getElementById('impTodos').addEventListener('change', e => {
+  const desde = document.getElementById('impDesde').value;
+  impFilas.forEach(x => { if (!desde || (x.d.fecha||'9999') >= desde) x.sel = e.target.checked; }); verImport();
+});
+document.getElementById('impFilas').addEventListener('change', e => { const i = e.target.dataset.imp; if (i !== undefined){ impFilas[+i].sel = e.target.checked; verImport(); } });
+document.getElementById('impOK').onclick = () => {
+  const desde = document.getElementById('impDesde').value;
+  const sel = impFilas.filter(x => x.sel && (!desde || (x.d.fecha||'9999') >= desde) && (x.est[0] === 'nuevo' || x.est[0] === 'act'));
+  const r = { nuevo:0, completado:0, actualizado:0 };
+  sel.forEach(x => { const k = altaDesdeParte(x.d); if (r[k] !== undefined) r[k]++; });
+  guardar(); cerrarImp(); if (vista==='done') setVista('pend'); else render(); syncInformes();
+  document.getElementById('msgPegar').textContent = `➕ ${r.nuevo} nuevos · 🔄 ${r.actualizado + r.completado} actualizados`;
+  toast(`${r.nuevo + r.actualizado + r.completado} centros del parte`);
+};
+
 // Da de alta (o completa uno creado desde la app del KMZ). Devuelve 'nuevo' | 'completado' | 'pendiente' | 'hecho'
 function altaDesdeParte(d){
   const n = normCD(d.numero);
@@ -563,11 +737,13 @@ function altaDesdeParte(d){
   if (pend){
     if (pend.operario !== 'Sin asignar'){
       // ya estaba: se corrigen con lo del Excel la fecha y el técnico
-      const antes = JSON.stringify([pend.fecha, pend.operario, pend.notas]);
+      const antes = JSON.stringify([pend.fecha, pend.operario, pend.notas, pend.tipo, pend.linea]);
       if (d.fecha) pend.fecha = d.fecha;
+      if (d.tipo) pend.tipo = d.tipo;
+      if (d.linea && !pend.linea) pend.linea = d.linea;
       if (d.operario) pend.operario = op;
       if (!pend.notas && d.obs) pend.notas = d.obs;
-      return antes === JSON.stringify([pend.fecha, pend.operario, pend.notas]) ? 'pendiente' : 'actualizado';
+      return antes === JSON.stringify([pend.fecha, pend.operario, pend.notas, pend.tipo, pend.linea]) ? 'pendiente' : 'actualizado';
     }
     Object.assign(pend, { operario:op, provincia:prov, tipo:d.tipo||pend.tipo, fecha:d.fecha||pend.fecha, linea:d.linea||pend.linea, notas:pend.notas||d.obs||'' });
     return 'completado';
