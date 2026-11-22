@@ -187,7 +187,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
     <datalist id="dlOps"></datalist>
     <details class="pegar" id="dPegar">
       <summary>📋 Pegar filas del parte diario (Excel de Badajoz o Sevilla)</summary>
-      <textarea id="tPegar" rows="3" placeholder="Copia en el Excel una o varias filas enteras (pulsando en el número de fila) y pégalas aquí. También puedes pegar una fila directamente en «Nº centro»."></textarea>
+      <textarea id="tPegar" rows="3" placeholder="Selecciona en el Excel las celdas desde Nº de CT hasta Observaciones (en Badajoz desde el nombre de la línea), de una o varias filas, cópialas y pégalas aquí. También puedes pegar una fila directamente en «Nº centro»."></textarea>
       <div class="pegar-acc"><button class="btn" type="button" id="bPegar">＋ Añadir centros pegados</button><span class="msg" id="msgPegar"></span></div>
     </details>
     <div class="pista" id="pista"></div>
@@ -251,7 +251,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -524,11 +524,14 @@ function leerParte(texto){
     if (!l.includes('\t')) return;
     const c = l.split('\t').map(x => x.trim());
     const p = c.findIndex(x => PROVS_ES.includes(sinAc(x)) || S.provincias.some(q => sinAc(q.nombre) === sinAc(x) && x));
-    if (p < 2) return;
-    const num = c[p-2];
-    if (!/^\d{2,7}$/.test(num)) return;
+    if (p < 1) return;
+    // Nº CT: dos columnas antes de PROVINCIA (Badajoz, con «revisado LABT» en medio, o fila entera)
+    // o justo antes (Sevilla copiando solo las columnas que deja la hoja protegida)
+    const esNum = x => /^\d{2,7}$/.test(x||'');
+    const num = esNum(c[p-2]) ? c[p-2] : esNum(c[p-1]) ? c[p-1] : '';
+    if (!num) return;
     const linea = [c[p+2], /^(SI|NO)$/i.test(c[p-1]) ? '' : c[p-1], /^\d+$/.test(c[p-3]||'') ? '' : c[p-3]].find(x => x && !/^\d+$/.test(x)) || '';
-    filas.push({ numero:num, provincia:c[p], tipo:tipoDe(c[p+3]), fecha:fechaISO(c[p+4]), operario:c[p+5]||'', linea });
+    filas.push({ numero:num, provincia:c[p], tipo:tipoDe(c[p+3]), fecha:fechaISO(c[p+4]), operario:c[p+5]||'', obs:c.slice(p+6).filter(Boolean).join(' · '), linea });
   });
   return filas;
 }
@@ -540,18 +543,18 @@ function altaDesdeParte(d){
   const pend = S.centros.find(c => normCD(c.numero) === n && !hecho(c));
   if (pend){
     if (pend.operario !== 'Sin asignar') return 'pendiente';
-    Object.assign(pend, { operario:op, provincia:prov, tipo:d.tipo||pend.tipo, fecha:d.fecha||pend.fecha, linea:d.linea||pend.linea });
+    Object.assign(pend, { operario:op, provincia:prov, tipo:d.tipo||pend.tipo, fecha:d.fecha||pend.fecha, linea:d.linea||pend.linea, notas:pend.notas||d.obs||'' });
     return 'completado';
   }
   if (S.centros.some(c => normCD(c.numero) === n)) return 'hecho';
   const inf = infoCD(n) || {};
-  S.centros.push({id:uid(), numero:n, operario:op, provincia:prov, linea:d.linea||inf.linea||'', tipo:d.tipo||'PT', codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:d.fecha||hoyISO(), notas:'', pasos:{}, creado:Date.now()});
+  S.centros.push({id:uid(), numero:n, operario:op, provincia:prov, linea:d.linea||inf.linea||'', tipo:d.tipo||'PT', codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:d.fecha||hoyISO(), notas:d.obs||'', pasos:{}, creado:Date.now()});
   return 'nuevo';
 }
 document.getElementById('bPegar').addEventListener('click', () => {
   const filas = leerParte(document.getElementById('tPegar').value);
   const msg = document.getElementById('msgPegar');
-  if (!filas.length){ msg.textContent = '⚠ No encuentro filas del parte diario (copia las filas enteras del Excel).'; return; }
+  if (!filas.length){ msg.textContent = '⚠ No encuentro filas del parte diario (copia desde Nº de CT hasta Observaciones).'; return; }
   const r = { nuevo:[], completado:[], pendiente:[], hecho:[] };
   filas.forEach(d => r[altaDesdeParte(d)].push(d.numero));
   guardar(); if (vista==='done') setVista('pend'); else render();
