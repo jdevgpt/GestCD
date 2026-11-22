@@ -84,6 +84,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--naranja)}
 .lista{display:grid;gap:10px}
 .card{background:#fff;border-radius:var(--radio);box-shadow:var(--sombra);padding:12px 14px;border-left:5px solid var(--naranja)}
 .card.done{opacity:.8}
+.duda{margin-top:8px;background:#fff6e0;border:1.5px solid #f3c969;border-radius:10px;padding:8px 10px;font-size:13px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.duda .btn{padding:6px 10px;font-size:13px}
+.duda small{font-weight:400;color:var(--gris-med)}
 .tag.rep{background:#fde8e8;color:var(--rojo);font-weight:700}
 .pista .aviso{color:var(--rojo);font-weight:700;flex-basis:100%}
 .prov-row .t input[type=color]{width:34px;height:28px;padding:0;border:0;background:none}
@@ -280,7 +283,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.8.2';
+const APP_VERSION = '1.9.0';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -476,6 +479,7 @@ function cardHTML(c){
       ${c.tipo?`<span class="tag">${esc(c.tipo)}</span>`:''}
       <span class="tag">👷 ${esc(c.operario)}</span>
       <span class="tag prov" style="background:${col}1F;color:${col}">${esc(c.provincia)}</span>
+      ${BD && !infoCD(c.numero) ? `<span class="tag rep" title="Comprueba el número: no aparece en la base de centros">⚠ No está en la BD</span>` : ''}
       ${veces>1?`<span class="tag rep" title="Este centro está ${veces} veces">⚠ Repetido ×${veces}</span>`:''}
       ${c.fecha?`<span class="tag" title="Fecha de inspección">📅 ${fmtF(c.fecha)}</span>`:''}
       ${done?`<span class="tag ok" data-act="abrir" data-id="${c.id}" style="cursor:pointer" title="Pulsa para cambiar la fecha de subida">☁ Subido ${fmtFull(c.pasos[FIN])}</span>`:''}
@@ -485,6 +489,9 @@ function cardHTML(c){
       <button class="mini" data-act="abrir" data-id="${c.id}" title="Detalles">${ab?'▴':'▾'}</button>
     </div>
     ${c.direccion?`<div class="dir">📍 ${esc(c.direccion)}</div>`:''}
+    ${c.dudaLinea ? `<div class="duda">⚠ La línea del parte no coincide con la base de datos. ¿Cuál dejo?
+      <button class="btn sec" data-act="elegirLinea" data-id="${c.id}" data-v="parte">${esc(c.dudaLinea.parte)} <small>(parte)</small></button>
+      <button class="btn sec" data-act="elegirLinea" data-id="${c.id}" data-v="bd">${esc(c.dudaLinea.bd)} <small>(base de datos)</small></button></div>` : ''}
     <div class="prog"><i style="width:${pct}%"></i></div>
     <div class="pasos">${chips}</div>
     ${!ab && c.notas ? `<div class="nota-prev">📝 ${esc(c.notas.length>90?c.notas.slice(0,90)+'…':c.notas)}</div>`:''}
@@ -703,7 +710,7 @@ function verImport(){
   document.getElementById('impFilas').innerHTML = vis.length ? vis.map(x => {
     const ok = IMPORTABLE.includes(x.est[0]);
     return `<tr><td><input type="checkbox" data-imp="${x.i}" ${ok && x.sel ? 'checked' : ''} ${ok ? '' : 'disabled'}></td>
-      <td><b>${esc(x.d.numero)}</b></td><td>${esc(titulo(x.d.provincia))}</td><td>${esc(x.d.linea)}</td><td>${esc(x.d.tipo)}</td>
+      <td><b>${esc(x.d.numero)}</b></td><td>${esc(titulo(x.d.provincia))}</td><td>${esc(x.d.linea)}${(() => { const bd = (infoCD(x.d.numero)||{}).linea; if (!BD) return ''; if (!infoCD(x.d.numero)) return ' <span class="est nuevo" title="Este nº no está en la base de centros">⚠ no está en la BD</span>'; return x.d.linea && bd && !lineaCoincide(x.d.linea, bd) ? ` <span class="est nuevo" title="Línea en la base de datos">⚠ BD: ${esc(bd)}</span>` : ''; })()}</td><td>${esc(x.d.tipo)}</td>
       <td>${fmtF(x.d.fecha) || '<span style="color:var(--rojo)">sin fecha</span>'}</td><td>${esc(operarioDe(x.d.operario)) || '<span style="color:var(--rojo)">sin técnico</span>'}</td>
       <td><span class="est ${x.est[0]}">${x.est[1]}</span></td></tr>`; }).join('')
     : '<tr><td colspan="8" class="vacio">No hay centros nuevos en esas fechas</td></tr>';
@@ -760,6 +767,22 @@ document.getElementById('impOK').onclick = () => {
 };
 
 // Da de alta (o completa uno creado desde la app del KMZ). Devuelve 'nuevo' | 'completado' | 'pendiente' | 'hecho'
+/* ---------- Comprobación de la línea con la base de centros ---------- */
+// En la base las líneas van recortadas (p. ej. CRTA_SEVIL), así que vale si una empieza como la otra
+const claveLin = t => sinAc(t).replace(/[^A-Z0-9]/g, '');
+function lineaCoincide(a, b){
+  const x = claveLin(a), y = claveLin(b);
+  if (!x || !y) return true;
+  return x === y || x.startsWith(y) || y.startsWith(x);
+}
+// Pone la línea del parte y, si no cuadra con la base de datos, deja la duda para elegir
+function revisarLinea(c, lineaParte){
+  const bd = (infoCD(c.numero) || {}).linea || '';
+  if (lineaParte && bd && !lineaCoincide(lineaParte, bd)){ c.dudaLinea = { parte:lineaParte, bd }; c.linea = lineaParte; return true; }
+  delete c.dudaLinea;
+  c.linea = lineaParte || bd || c.linea || '';
+  return false;
+}
 function altaDesdeParte(d){
   const n = normCD(d.numero);
   const prov = provinciaDe(d.provincia) || localStorage.getItem(KEY+'_ultProv') || (S.provincias[0]||{}).nombre || '';
@@ -771,12 +794,13 @@ function altaDesdeParte(d){
       const antes = JSON.stringify([pend.fecha, pend.operario, pend.notas, pend.tipo, pend.linea]);
       if (d.fecha) pend.fecha = d.fecha;
       if (d.tipo) pend.tipo = d.tipo;
-      if (d.linea && !pend.linea) pend.linea = d.linea;
+      if (d.linea && pend.linea !== d.linea && !(pend.dudaLinea === undefined && pend.lineaElegida)) revisarLinea(pend, d.linea);
       if (d.operario) pend.operario = op;
       if (!pend.notas && d.obs) pend.notas = d.obs;
       return antes === JSON.stringify([pend.fecha, pend.operario, pend.notas, pend.tipo, pend.linea]) ? 'pendiente' : 'actualizado';
     }
-    Object.assign(pend, { operario:op, provincia:prov, tipo:d.tipo||pend.tipo, fecha:d.fecha||pend.fecha, linea:d.linea||pend.linea, notas:pend.notas||d.obs||'' });
+    Object.assign(pend, { operario:op, provincia:prov, tipo:d.tipo||pend.tipo, fecha:d.fecha||pend.fecha, notas:pend.notas||d.obs||'' });
+    if (d.linea) revisarLinea(pend, d.linea);
     return 'completado';
   }
   // ya completado: se corrige la fecha de inspección y el técnico del registro más reciente
@@ -789,7 +813,9 @@ function altaDesdeParte(d){
     return antes === JSON.stringify([ya.fecha, ya.operario, ya.tipo]) ? 'hecho' : 'actualizado';
   }
   const inf = infoCD(n) || {};
-  S.centros.push({id:uid(), numero:n, operario:op, provincia:prov, linea:d.linea||inf.linea||'', tipo:d.tipo||'PT', codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:d.fecha||hoyISO(), notas:d.obs||'', pasos:{}, creado:Date.now()});
+  const nuevo = {id:uid(), numero:n, operario:op, provincia:prov, linea:'', tipo:d.tipo||'PT', codigo:inf.codigo||'', direccion:inf.direccion||'', fecha:d.fecha||hoyISO(), notas:d.obs||'', pasos:{}, creado:Date.now()};
+  revisarLinea(nuevo, d.linea);
+  S.centros.push(nuevo);
   return 'nuevo';
 }
 document.getElementById('bPegar').addEventListener('click', () => {
@@ -803,6 +829,8 @@ document.getElementById('bPegar').addEventListener('click', () => {
   if (r.nuevo.length) t.push(`➕ ${r.nuevo.length} añadido${r.nuevo.length>1?'s':''}: ${r.nuevo.join(', ')}`);
   if (r.completado.length) t.push(`✏️ completados con operario y provincia: ${r.completado.join(', ')}`);
   if (r.actualizado.length) t.push(`🔄 actualizados con la fecha/técnico del Excel: ${r.actualizado.join(', ')}`);
+  const dudas = filas.filter(d => S.centros.some(c => normCD(c.numero) === normCD(d.numero) && c.dudaLinea)).map(d => d.numero);
+  if (dudas.length) t.push(`⚠ la línea no coincide con la base de datos en: ${dudas.join(', ')} (elige cuál dejar en cada centro)`);
   const sinTec = filas.filter(d => !d.operario).map(d => d.numero);
   if (sinTec.length) t.push(`⚠ sin técnico en lo pegado: ${sinTec.join(', ')}`);
   const sinF = filas.filter(d => !d.fecha).map(d => d.numero);
@@ -895,6 +923,8 @@ lista.addEventListener('click', e => {
     guardarDetalles(c, b.closest('.card'));
   } else if (act === 'cancelarDet'){
     abiertos.delete(c.id); render();
+  } else if (act === 'elegirLinea'){
+    if (c.dudaLinea){ c.linea = c.dudaLinea[b.dataset.v]; delete c.dudaLinea; c.lineaElegida = true; guardar(); render(); toast('Línea ' + c.linea); }
   } else if (act === 'informe'){
     window.open('../InformesConBT/?cd=' + encodeURIComponent(c.numero), 'informesbt');
   } else if (act === 'abrir'){
