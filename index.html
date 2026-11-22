@@ -283,7 +283,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.7.2';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -529,9 +529,14 @@ function fechaISO(v){
   if ((m = v.match(/^(\d{1,2})[\/\-.](\d{1,2})$/))) return iso(new Date().getFullYear(), m[2], m[1]);   // 18/11 sin año
   // 18-nov-26 · 18 nov. 2026 · lunes, 18 de noviembre de 2026
   const MESES = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
-  if ((m = sinAc(v).match(/(\d{1,2})[\s\-\/.]*(?:DE\s+)?([A-Z]{3})[A-Z.]*[\s\-\/.]*(?:DE\s+)?(\d{2,4})/))){
-    let mes = MESES.indexOf(m[2] === 'SET' ? 'SEP' : m[2]);
-    if (mes >= 0){ const y = m[3].length===2 ? '20'+m[3] : m[3]; return `${y}-${String(mes+1).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}`; }
+  // 03-nov (sin año, como sale en el parte): año actual, o el anterior si quedaría en el futuro
+  if ((m = sinAc(v).match(/(\d{1,2})[\s\-\/.]*(?:DE\s+)?([A-Z]{3})[A-Z.]*(?:[\s\-\/.]*(?:DE\s+)?(\d{2,4}))?/))){
+    const mes = MESES.indexOf(m[2] === 'SET' ? 'SEP' : m[2]);
+    if (mes >= 0){
+      let y = m[3] ? (m[3].length===2 ? '20'+m[3] : m[3]) : new Date().getFullYear();
+      if (!m[3] && new Date(y, mes, +m[1]) > new Date(Date.now() + 15*864e5)) y--;
+      return iso(y, mes+1, m[1]);
+    }
   }
   if (/^\d{5}([.,]\d+)?$/.test(v) && parseFloat(v.replace(',','.')) > 40000 && parseFloat(v.replace(',','.')) < 60000){ v = v.replace(',','.'); const d = new Date(Math.round((+v - 25569)*86400000)); return d.toISOString().slice(0,10); }
   return '';
