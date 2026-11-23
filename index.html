@@ -287,7 +287,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.9.1';
+const APP_VERSION = '1.9.2';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -325,6 +325,26 @@ function avisoRep(n){
     ? `completado el ${fmtTs(c.pasos[FIN])} (${esc(c.operario)})`
     : `pendiente (${esc(c.operario)}, ${fmtF(c.fecha)})`).join(' · ') + '</span>';
 }
+// Provincia de un centro: la que ya tenga en GestCD o en Informe BT, o la de otros centros de su misma línea
+function provinciaSugerida(n, linea){
+  const k = normCD(n), kl = sinAc(linea||'').replace(/[^A-Z0-9]/g,'');
+  const valida = p => { const q = S.provincias.find(x => sinAc(x.nombre) === sinAc(p||'')); return q ? q.nombre : ''; };
+  const mio = S.centros.filter(c => normCD(c.numero) === k).sort((a,b) => b.creado - a.creado)[0];
+  if (mio && valida(mio.provincia)) return { p:valida(mio.provincia), por:'el centro ya registrado' };
+  let ibt = null; try{ ibt = JSON.parse(localStorage.getItem('ibt_estado') || 'null'); }catch(_){}
+  for (const l of (ibt && ibt.lineas) || []) for (const c of l.centros || [])
+    if (normCD(c.centro) === k && valida(c.provincia)) return { p:valida(c.provincia), por:'Informe BT' };
+  if (kl){
+    const cuenta = {};
+    S.centros.forEach(c => { if (sinAc(c.linea||'').replace(/[^A-Z0-9]/g,'') === kl && valida(c.provincia)) cuenta[valida(c.provincia)] = (cuenta[valida(c.provincia)]||0) + 1; });
+    const mejor = Object.entries(cuenta).sort((a,b) => b[1]-a[1])[0];
+    if (mejor) return { p:mejor[0], por:'la línea' };
+    if (S.lineaProv && valida(S.lineaProv[kl])) return { p:valida(S.lineaProv[kl]), por:'la línea' };
+    for (const l of (ibt && ibt.lineas) || []) if (sinAc(l.nombre||'').replace(/[^A-Z0-9]/g,'') === kl)
+      for (const c of l.centros || []) if (valida(c.provincia)) return { p:valida(c.provincia), por:'la línea' };
+  }
+  return null;
+}
 function pista(){
   const el = document.getElementById('pista'), n = document.getElementById('iNum').value.trim();
   el.className = 'pista';
@@ -333,7 +353,15 @@ function pista(){
   const i = infoCD(n);
   if (!i){ el.className='pista on no'; el.innerHTML = avisoRep(n) + 'Centro no encontrado en la base de datos'; return; }
   el.className = 'pista on';
-  el.innerHTML = avisoRep(n) + `<span>Línea: <b>${esc(i.linea||'—')}</b></span>${i.direccion?`<span>📍 ${esc(i.direccion)}</span>`:''}`;
+  const sp = provinciaSugerida(n, i.linea);
+  if (sp) document.getElementById('iProv').value = sp.p;
+  // tipo (CT/PT): la base no lo trae; se usa el de la última vez que se registró este centro
+  const prev = S.centros.filter(c => normCD(c.numero) === normCD(n) && c.tipo).sort((a,b) => b.creado - a.creado)[0];
+  if (prev) document.getElementById('iTipo').value = prev.tipo;
+  el.innerHTML = avisoRep(n) + `<span>Línea: <b>${esc(i.linea||'—')}</b></span>`
+    + (sp ? `<span>Provincia: <b>${esc(sp.p)}</b> <small style="color:var(--gris-med)">(por ${esc(sp.por)})</small></span>` : `<span style="color:var(--gris-med)">Provincia: elígela (aún no conozco esta línea)</span>`)
+    + (prev ? `<span>Tipo: <b>${esc(prev.tipo)}</b> <small style="color:var(--gris-med)">(como la última vez)</small></span>` : '')
+    + (i.direccion?`<span>📍 ${esc(i.direccion)}</span>`:'');
 }
 let vista = 'pend';
 let abiertos = new Set();
@@ -354,6 +382,11 @@ function cargar(){
   return JSON.parse(JSON.stringify(DEFAULT));
 }
 function guardar(){
+  // aprende de qué provincia es cada línea (la base de centros no trae la provincia)
+  try{
+    S.lineaProv = S.lineaProv || {};
+    S.centros.forEach(c => { const k = sinAc(c.linea||'').replace(/[^A-Z0-9]/g,''); if (k && c.provincia) S.lineaProv[k] = c.provincia; });
+  }catch(_){}
   try{ localStorage.setItem(KEY, JSON.stringify(S)); }
   catch(e){ toast('No se pudo guardar'); }
 }
