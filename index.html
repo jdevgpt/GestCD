@@ -197,7 +197,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
     <h2>Nuevo centro</h2>
     <form class="form" id="fNuevo" autocomplete="off">
       <label class="f">Nº centro<input id="iNum" required inputmode="numeric" placeholder="Ej. 123456"></label>
-      <label class="f">Tipo<select id="iTipo"><option>CT</option><option selected>PT</option><option>ST</option></select></label>
+      <label class="f" style="display:none">Tipo<select id="iTipo"><option>CT</option><option selected>PT</option><option>ST</option></select></label>
       <label class="f">Operario de campo<input id="iOp" required list="dlOps" placeholder="Nombre"></label>
       <label class="f">Provincia<select id="iProv"></select></label>
       <label class="f">Fecha inspección<input id="iFecha" type="date"></label>
@@ -279,7 +279,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
       <label class="f" style="flex-direction:row;align-items:center;gap:8px">Inspeccionados desde <input type="date" id="impDesde" style="width:auto"></label>
       <label class="chk"><input type="checkbox" id="impSoloNuevos" checked> Ocultar los que no se añaden (iguales o acabados en oficina)</label>
     </div>
-    <div class="imp-tabla"><table><thead><tr><th><input type="checkbox" id="impTodos" checked></th><th>Nº</th><th>Provincia</th><th>Línea</th><th>Tipo</th><th>Inspección</th><th>Técnico</th><th>Qué se hace</th></tr></thead><tbody id="impFilas"></tbody></table></div>
+    <div class="imp-tabla"><table><thead><tr><th><input type="checkbox" id="impTodos" checked></th><th>Nº</th><th>Provincia</th><th>Línea</th><th>Inspección</th><th>Técnico</th><th>Qué se hace</th></tr></thead><tbody id="impFilas"></tbody></table></div>
     <div class="pegar-acc" style="justify-content:flex-end"><span class="msg" id="impMsg" style="flex:1"></span><button class="btn sec" id="impCancelar">Cancelar</button><button class="btn" id="impOK">Importar</button></div>
   </div>
 </div>
@@ -289,7 +289,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.1';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -359,9 +359,8 @@ function pista(){
   // tipo (CT/PT): la base no lo trae; se usa el de la última vez que se registró este centro
   const prev = S.centros.filter(c => normCD(c.numero) === normCD(n) && c.tipo).sort((a,b) => b.creado - a.creado)[0];
   if (prev) document.getElementById('iTipo').value = prev.tipo;
-  el.innerHTML = avisoRep(n) + `<span>Línea: <b>${esc(i.linea||'—')}</b></span>`
+  el.innerHTML = avisoRep(n) + (esBadajoz(document.getElementById('iProv').value) ? `<span>Línea: <b>${esc(i.linea||'—')}</b></span>` : '')
     + (sp ? `<span>Provincia: <b>${esc(sp.p)}</b> <small style="color:var(--gris-med)">(por ${esc(sp.por)})</small></span>` : `<span style="color:var(--gris-med)">Provincia: elígela (aún no conozco esta línea)</span>`)
-    + (prev ? `<span>Tipo: <b>${esc(prev.tipo)}</b> <small style="color:var(--gris-med)">(como la última vez)</small></span>` : '')
     + (i.direccion?`<span>📍 ${esc(i.direccion)}</span>`:'');
 }
 let vista = 'pend';
@@ -524,8 +523,7 @@ function cardHTML(c){
   return `<div class="card ${done?'done':''} ${ab?'abierta':''}" style="border-left-color:${col}">
     <div class="card-h">
       <span class="num">${esc(c.numero)}</span>
-      ${c.linea?`<span class="tag lin">⚡ ${esc(c.linea)}</span>`:''}
-      ${c.tipo?`<span class="tag">${esc(c.tipo)}</span>`:''}
+      ${c.linea && esBadajoz(c.provincia)?`<span class="tag lin">⚡ ${esc(c.linea)}</span>`:''}
       <span class="tag">👷 ${esc(c.operario)}</span>
       <span class="tag prov" style="background:${col}1F;color:${col}">${esc(c.provincia)}</span>
       ${BD && !infoCD(c.numero) ? `<span class="tag rep" title="Comprueba el número: no aparece en la base de centros">⚠ No está en la BD</span>` : ''}
@@ -538,7 +536,7 @@ function cardHTML(c){
       <button class="mini" data-act="abrir" data-id="${c.id}" title="Detalles">${ab?'▴':'▾'}</button>
     </div>
     ${c.direccion?`<div class="dir">📍 ${esc(c.direccion)}</div>`:''}
-    ${c.dudaLinea ? `<div class="duda">⚠ La línea del parte no coincide con la base de datos. ¿Cuál dejo?
+    ${c.dudaLinea && esBadajoz(c.provincia) ? `<div class="duda">⚠ La línea del parte no coincide con la base de datos. ¿Cuál dejo?
       <button class="btn sec" data-act="elegirLinea" data-id="${c.id}" data-v="parte">${esc(c.dudaLinea.parte)} <small>(parte)</small></button>
       <button class="btn sec" data-act="elegirLinea" data-id="${c.id}" data-v="bd">${esc(c.dudaLinea.bd)} <small>(base de datos)</small></button></div>` : ''}
     <div class="prog"><i style="width:${pct}%"></i></div>
@@ -548,7 +546,6 @@ function cardHTML(c){
       <div class="notas-ed" contenteditable="true" data-f="notas" data-ph="Notas (incidencias, qué falta, etc.)">${notasHTML(c.notas||'')}</div>
       <div class="fila">
         <label class="f" style="flex:1;min-width:130px">Operario<input data-f="operario" value="${esc(c.operario)}" list="dlOps"></label>
-        <label class="f" style="flex:0 1 90px">Tipo<select data-f="tipo">${['CT','PT','ST'].map(t=>`<option ${t===c.tipo?'selected':''}>${t}</option>`).join('')}</select></label>
         <label class="f" style="flex:1;min-width:120px">Provincia<select data-f="provincia">${S.provincias.map(p=>`<option ${p.nombre===c.provincia?'selected':''}>${esc(p.nombre)}</option>`).join('')}</select></label>
         <label class="f" style="flex:1;min-width:120px">Fecha inspección<input type="date" data-f="fecha" value="${esc(c.fecha||'')}"></label>
         ${done?`<label class="f" style="flex:1;min-width:190px">Subido a SharePoint<input type="datetime-local" data-f="subida" value="${aLocal(c.pasos[FIN])}"></label>`:''}
@@ -770,6 +767,14 @@ function estadoEnGestCD(d){
   if (!ch.length) return ['igual', 'Ya está en la app · se deja igual'];
   return ['cambio', '¿Actualizar? ' + ch.map(x => x.txt).join(' · '), ya, ch];
 }
+function celdaLinea(d){
+  if (!esBadajoz(d.provincia)) return '<td></td>';
+  const inf = infoCD(d.numero), bd = (inf||{}).linea || '';
+  let h = d.linea ? esc(d.linea) : `<span style="color:var(--gris-med)">${esc(bd)}</span>`;
+  if (BD && !inf) h += ' <span class="est nuevo" title="Este nº no está en la base de centros">⚠ no está en la BD</span>';
+  else if (d.linea && bd && !lineaCoincide(d.linea, bd)) h += ` <span class="est nuevo" title="Línea en la base de datos">⚠ BD: ${esc(bd)}</span>`;
+  return '<td>' + h + '</td>';
+}
 function verImport(){
   const desde = document.getElementById('impDesde').value, solo = document.getElementById('impSoloNuevos').checked;
   const vis = impFilas.filter(x => (!desde || (x.d.fecha || '9999') >= desde) && (!solo || IMPORTABLE.includes(x.est[0])));
@@ -778,7 +783,7 @@ function verImport(){
   document.getElementById('impFilas').innerHTML = vis.length ? vis.map(x => {
     const ok = IMPORTABLE.includes(x.est[0]);
     return `<tr><td><input type="checkbox" data-imp="${x.i}" ${ok && x.sel ? 'checked' : ''} ${ok ? '' : 'disabled'}></td>
-      <td><b>${esc(x.d.numero)}</b></td><td>${esc(titulo(x.d.provincia))}</td><td>${x.d.linea ? esc(x.d.linea) : `<span style="color:var(--gris-med)">${esc((infoCD(x.d.numero)||{}).linea||'')}</span>`}${(() => { const bd = (infoCD(x.d.numero)||{}).linea; if (!BD) return ''; if (!infoCD(x.d.numero)) return ' <span class="est nuevo" title="Este nº no está en la base de centros">⚠ no está en la BD</span>'; return x.d.linea && bd && !lineaCoincide(x.d.linea, bd) ? ` <span class="est nuevo" title="Línea en la base de datos">⚠ BD: ${esc(bd)}</span>` : ''; })()}</td><td>${esc(x.d.tipo) || '<span style="color:var(--gris-med)">PT</span>'}</td>
+      <td><b>${esc(x.d.numero)}</b></td><td>${esc(titulo(x.d.provincia))}</td>${celdaLinea(x.d)}
       <td>${fmtF(x.d.fecha) || '<span style="color:var(--rojo)">sin fecha</span>'}</td><td>${esc(operarioDe(x.d.operario)) || '<span style="color:var(--rojo)">sin técnico</span>'}</td>
       <td style="white-space:normal;min-width:220px"><span class="est ${x.est[0]}">${esc(x.est[1])}</span></td></tr>`; }).join('')
     : '<tr><td colspan="8" class="vacio">No hay centros nuevos ni cambios</td></tr>';
@@ -857,6 +862,7 @@ const notasHTML = t => esc(t).replace(/^(NOTAS DE CAMPO:)/gm, '<b>$1</b>').repla
 
 /* ---------- Comprobación de la línea con la base de centros ---------- */
 // En la base las líneas van recortadas (p. ej. CRTA_SEVIL), así que vale si una empieza como la otra
+const esBadajoz = p => sinAc(p||'') === 'BADAJOZ';   // la línea solo importa en Badajoz
 const claveLin = t => sinAc(t).replace(/[^A-Z0-9]/g, '');
 function lineaCoincide(a, b){
   const x = claveLin(a), y = claveLin(b);
@@ -866,7 +872,7 @@ function lineaCoincide(a, b){
 // Pone la línea del parte y, si no cuadra con la base de datos, deja la duda para elegir
 function revisarLinea(c, lineaParte){
   const bd = (infoCD(c.numero) || {}).linea || '';
-  if (lineaParte && bd && !lineaCoincide(lineaParte, bd)){ c.dudaLinea = { parte:lineaParte, bd }; c.linea = lineaParte; return true; }
+  if (esBadajoz(c.provincia) && lineaParte && bd && !lineaCoincide(lineaParte, bd)){ c.dudaLinea = { parte:lineaParte, bd }; c.linea = lineaParte; return true; }
   delete c.dudaLinea;
   c.linea = lineaParte || bd || c.linea || '';
   return false;
@@ -1048,7 +1054,7 @@ function guardarDetalles(c, card){
     if (!sub || isNaN(t)) return toast('La fecha de subida no es válida');
     c.pasos[FIN] = t;
   }
-  c.notas = v('notas') || ''; c.operario = op; c.tipo = v('tipo'); c.provincia = v('provincia'); c.fecha = v('fecha') || '';
+  c.notas = v('notas') || ''; c.operario = op; c.provincia = v('provincia'); c.fecha = v('fecha') || '';
   guardar(); abiertos.delete(c.id); render(); toast('Cambios guardados');
 }
 
@@ -1133,11 +1139,11 @@ document.getElementById('fileImp').onchange = async e => {
   e.target.value = '';
 };
 document.getElementById('bCSV').onclick = () => {
-  const cols = ['Nº centro','Línea','Tipo','Código','Dirección','Operario','Provincia','Fecha inspección', ...S.pasos.map(p=>p.nombre), 'Subido a SharePoint','Notas'];
+  const cols = ['Nº centro','Línea','Código','Dirección','Operario','Provincia','Fecha inspección', ...S.pasos.map(p=>p.nombre), 'Subido a SharePoint','Notas'];
   const q = v => `"${String(v??'').replace(/"/g,'""')}"`;
   const filas = S.centros.map(c => {
     const aplica = pasosDe(c).map(p=>p.id);
-    return [c.numero, c.linea, c.tipo, c.codigo, c.direccion, c.operario, c.provincia, fmtF(c.fecha),
+    return [c.numero, c.linea, c.codigo, c.direccion, c.operario, c.provincia, fmtF(c.fecha),
       ...S.pasos.map(p => aplica.includes(p.id) ? fmtTs(c.pasos[p.id]) : 'N/A'),
       fmtFull(c.pasos[FIN]), c.notas].map(q).join(';');
   });
