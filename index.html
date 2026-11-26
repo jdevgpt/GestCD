@@ -146,6 +146,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--naranja)}
 .est{font-size:12px;padding:2px 8px;border-radius:20px;font-weight:600}
 .est.nuevo{background:var(--naranja-claro);color:var(--naranja-osc)}
 .est.act{background:#e6f0fb;color:#2F7FD1}
+.est.kmz{background:var(--naranja-claro);color:var(--naranja-osc)}
+.est.cambio{background:#e6f0fb;color:#2F7FD1}
 .est.gest{background:#e4f5eb;color:var(--ok)}
 .est.igual,.est.hecho,.est.ofi{background:var(--gris-fondo);color:var(--gris-med)}
 #upd{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--gris);color:#fff;padding:10px 12px 10px 16px;border-radius:12px;display:none;align-items:center;gap:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);z-index:60}
@@ -275,9 +277,9 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
     <div class="hist" id="impInfo"></div>
     <div class="pegar-acc">
       <label class="f" style="flex-direction:row;align-items:center;gap:8px">Inspeccionados desde <input type="date" id="impDesde" style="width:auto"></label>
-      <label class="chk"><input type="checkbox" id="impSoloNuevos" checked> Ocultar los que ya están al día</label>
+      <label class="chk"><input type="checkbox" id="impSoloNuevos" checked> Ocultar los que no se añaden (iguales o acabados en oficina)</label>
     </div>
-    <div class="imp-tabla"><table><thead><tr><th><input type="checkbox" id="impTodos" checked></th><th>Nº</th><th>Provincia</th><th>Línea</th><th>Tipo</th><th>Inspección</th><th>Técnico</th><th>En GestCD</th></tr></thead><tbody id="impFilas"></tbody></table></div>
+    <div class="imp-tabla"><table><thead><tr><th><input type="checkbox" id="impTodos" checked></th><th>Nº</th><th>Provincia</th><th>Línea</th><th>Tipo</th><th>Inspección</th><th>Técnico</th><th>Qué se hace</th></tr></thead><tbody id="impFilas"></tbody></table></div>
     <div class="pegar-acc" style="justify-content:flex-end"><span class="msg" id="impMsg" style="flex:1"></span><button class="btn sec" id="impCancelar">Cancelar</button><button class="btn" id="impOK">Importar</button></div>
   </div>
 </div>
@@ -287,7 +289,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '2.0.0';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -699,6 +701,8 @@ async function leerXlsx(file){
 function campoDeTitulo(t){
   const h = sinAc(t).replace(/[^A-Z0-9]/g, '');
   if (!h) return '';
+  if (/^(TC|TCO|TECNICO).*OFICINA/.test(h)) return '-';            // técnico de oficina: no se usa
+  if (/(ACABADO|REVISADO|TERMINADO|FINALIZADO).*OFICINA/.test(h)) return 'oficina!';
   if (/OFICINA/.test(h)) return 'oficina';
   if (/REVIS/.test(h)) return '-';
   if (/^(N|NO|NUM|NUMERO)(DE|DEL)?(CT|CD|PT|CENTRO)$/.test(h) || /^(CT|CD|CENTRO)$/.test(h)) return 'numero';
@@ -714,19 +718,28 @@ function campoDeTitulo(t){
 }
 function filasDelExcel(hojas, provPorDefecto){
   const out = {}; let leidas = 0;
+  let conOficina = false;
   hojas.forEach(h => {
+    const provHoja = (S.provincias.find(p => sinAc(p.nombre) === sinAc(h.nombre)) || {}).nombre
+      || (PROVS_ES.includes(sinAc(h.nombre)) ? titulo(h.nombre) : '');
     for (let r = 0; r < Math.min(40, h.filas.length); r++){
       const mapa = {};
-      (h.filas[r] || []).forEach((t, i) => {
-        const k = campoDeTitulo(t); if (!k || k === '-') return;
+      const fila = h.filas[r] || [], arriba = (r > 0 && h.filas[r-1]) || [];
+      const n = Math.max(fila.length, arriba.length);
+      for (let i = 0; i < n; i++){
+        let k = campoDeTitulo(fila[i]);
+        if (!k) k = campoDeTitulo(arriba[i]);
+        if (!k || k === '-') continue;
         const base = k.replace('!', '');
         if (mapa[base] === undefined || (k.endsWith('!') && !mapa[base+'!'])){ mapa[base] = i; if (k.endsWith('!')) mapa[base+'!'] = true; }
-      });
+      }
       if (mapa.numero === undefined || (mapa.fecha === undefined && mapa.operario === undefined)) continue;
       for (let k = r+1; k < h.filas.length; k++){
         const f = h.filas[k] || [], o = {};
         ['numero','provincia','linea','tipo','fecha','operario','obs','oficina'].forEach(c => { if (mapa[c] !== undefined) o[c] = f[mapa[c]]; });
-        const d = filaParte(o, provPorDefecto); if (!d) continue;
+        const d = filaParte(o, provHoja || provPorDefecto); if (!d) continue;
+        if (provHoja && !o.provincia) d.provincia = provHoja;
+        if (mapa.oficina !== undefined) conOficina = true;
         leidas++;
         const n = normCD(d.numero);
         if (!out[n] || (d.fecha || '') >= (out[n].fecha || '')) out[n] = d;   // si sale varias veces, la inspección más reciente
@@ -734,43 +747,44 @@ function filasDelExcel(hojas, provPorDefecto){
       break;
     }
   });
-  return { filas:Object.values(out), leidas };
+  return { filas:Object.values(out), leidas, conOficina };
 }
 let impFilas = [];
-const IMPORTABLE = ['nuevo','act','gest'];
+// nuevo / kmz (creado desde la app del KMZ, se completa) → marcados · cambio → se pregunta (desmarcado)
+const IMPORTABLE = ['nuevo','kmz','cambio'];
+function cambiosCon(c, d){
+  const ch = [], op = operarioDe(d.operario);
+  const prov = (S.provincias.find(p => sinAc(p.nombre) === sinAc(d.provincia)) || {}).nombre || '';
+  if (d.fecha && d.fecha !== c.fecha) ch.push({ k:'fecha', txt:`Inspección ${fmtF(c.fecha)||'—'} → ${fmtF(d.fecha)}` });
+  if (op && op !== c.operario) ch.push({ k:'operario', txt:`Técnico ${c.operario||'—'} → ${op}` });
+  if (prov && prov !== c.provincia) ch.push({ k:'provincia', txt:`Provincia ${c.provincia||'—'} → ${prov}` });
+  if (d.oficina && !hecho(c)) ch.push({ k:'acabar', txt:'En el parte está ACABADO EN OFICINA → marcar completado' });
+  return ch;
+}
 function estadoEnGestCD(d){
   const n = normCD(d.numero);
-  const pend = S.centros.find(c => normCD(c.numero) === n && !hecho(c));
-  if (d.oficina){
-    if (pend) return ['gest', 'Revisado en oficina · se marca completado'];
-    return ['ofi', 'Ya gestionado en oficina'];
-  }
-  if (pend){
-    const op = operarioDe(d.operario);
-    const cambia = (d.fecha && d.fecha !== pend.fecha) || (op && op !== pend.operario);
-    return cambia ? ['act', 'Pendiente · se corrige fecha/técnico'] : ['igual', 'Pendiente · al día'];
-  }
-  const ya = S.centros.filter(c => normCD(c.numero) === n).sort((a,b) => b.creado - a.creado)[0];
-  if (ya){
-    const op = operarioDe(d.operario);
-    const cambia = (d.fecha && d.fecha !== ya.fecha) || (op && op !== ya.operario);
-    return cambia ? ['act', 'Completado · se corrige fecha/técnico'] : ['hecho', 'Completado · al día'];
-  }
-  return ['nuevo', 'Nuevo'];
+  const ya = S.centros.filter(c => normCD(c.numero) === n).sort((a,b) => (hecho(a)-hecho(b)) || (b.creado - a.creado))[0];
+  if (!ya) return d.oficina ? ['ofi', 'Acabado en oficina · no se añade'] : ['nuevo', 'Nuevo · se añade'];
+  if (!hecho(ya) && ya.operario === 'Sin asignar') return ['kmz', 'Creado desde la app del KMZ · se completa con el parte'];
+  const ch = cambiosCon(ya, d);
+  if (!ch.length) return ['igual', 'Ya está en la app · se deja igual'];
+  return ['cambio', '¿Actualizar? ' + ch.map(x => x.txt).join(' · '), ya, ch];
 }
 function verImport(){
   const desde = document.getElementById('impDesde').value, solo = document.getElementById('impSoloNuevos').checked;
   const vis = impFilas.filter(x => (!desde || (x.d.fecha || '9999') >= desde) && (!solo || IMPORTABLE.includes(x.est[0])));
-  vis.sort((a,b) => (a.d.fecha||'').localeCompare(b.d.fecha||'') || a.d.numero.localeCompare(b.d.numero, 'es', {numeric:true}));
+  const orden = { cambio:0, nuevo:1, kmz:2, igual:3, ofi:4 };   // primero lo que hay que decidir
+  vis.sort((a,b) => (orden[a.est[0]] - orden[b.est[0]]) || (a.d.fecha||'').localeCompare(b.d.fecha||'') || a.d.numero.localeCompare(b.d.numero, 'es', {numeric:true}));
   document.getElementById('impFilas').innerHTML = vis.length ? vis.map(x => {
     const ok = IMPORTABLE.includes(x.est[0]);
     return `<tr><td><input type="checkbox" data-imp="${x.i}" ${ok && x.sel ? 'checked' : ''} ${ok ? '' : 'disabled'}></td>
-      <td><b>${esc(x.d.numero)}</b></td><td>${esc(titulo(x.d.provincia))}</td><td>${esc(x.d.linea)}${(() => { const bd = (infoCD(x.d.numero)||{}).linea; if (!BD) return ''; if (!infoCD(x.d.numero)) return ' <span class="est nuevo" title="Este nº no está en la base de centros">⚠ no está en la BD</span>'; return x.d.linea && bd && !lineaCoincide(x.d.linea, bd) ? ` <span class="est nuevo" title="Línea en la base de datos">⚠ BD: ${esc(bd)}</span>` : ''; })()}</td><td>${esc(x.d.tipo)}</td>
+      <td><b>${esc(x.d.numero)}</b></td><td>${esc(titulo(x.d.provincia))}</td><td>${x.d.linea ? esc(x.d.linea) : `<span style="color:var(--gris-med)">${esc((infoCD(x.d.numero)||{}).linea||'')}</span>`}${(() => { const bd = (infoCD(x.d.numero)||{}).linea; if (!BD) return ''; if (!infoCD(x.d.numero)) return ' <span class="est nuevo" title="Este nº no está en la base de centros">⚠ no está en la BD</span>'; return x.d.linea && bd && !lineaCoincide(x.d.linea, bd) ? ` <span class="est nuevo" title="Línea en la base de datos">⚠ BD: ${esc(bd)}</span>` : ''; })()}</td><td>${esc(x.d.tipo) || '<span style="color:var(--gris-med)">PT</span>'}</td>
       <td>${fmtF(x.d.fecha) || '<span style="color:var(--rojo)">sin fecha</span>'}</td><td>${esc(operarioDe(x.d.operario)) || '<span style="color:var(--rojo)">sin técnico</span>'}</td>
-      <td><span class="est ${x.est[0]}">${x.est[1]}</span></td></tr>`; }).join('')
-    : '<tr><td colspan="8" class="vacio">No hay centros nuevos en esas fechas</td></tr>';
+      <td style="white-space:normal;min-width:220px"><span class="est ${x.est[0]}">${esc(x.est[1])}</span></td></tr>`; }).join('')
+    : '<tr><td colspan="8" class="vacio">No hay centros nuevos ni cambios</td></tr>';
   const n = impFilas.filter(x => x.sel && vis.includes(x) && IMPORTABLE.includes(x.est[0])).length;
-  const b = document.getElementById('impOK'); b.textContent = `Importar ${n} centro${n===1?'':'s'}`; b.disabled = !n;
+  const nN = impFilas.filter(x => x.sel && vis.includes(x) && x.est[0] !== 'cambio' && IMPORTABLE.includes(x.est[0])).length;
+  const b = document.getElementById('impOK'); b.textContent = n ? `Añadir ${nN}` + (n - nN ? ` y actualizar ${n - nN}` : '') : 'Nada que importar'; b.disabled = !n;
 }
 document.getElementById('fileParte').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
@@ -782,12 +796,13 @@ document.getElementById('fileParte').addEventListener('change', async e => {
     const r = filasDelExcel(await leerXlsx(f), provDef);
     if (!r.filas.length){ msg.textContent = '⚠ No encuentro la tabla del parte (busco columnas con título Nº CT/CD, Fecha y Técnico).'; return; }
     msg.textContent = '';
-    impFilas = r.filas.map((d, i) => ({ i, d, est:estadoEnGestCD(d), sel:true }));
+    impFilas = r.filas.map((d, i) => { const est = estadoEnGestCD(d); return { i, d, est, sel: est[0] === 'nuevo' || est[0] === 'kmz' }; });
     const d0 = new Date(); d0.setDate(1);
-    document.getElementById('impDesde').value = hoyISO().slice(0,8) + '01';
+    // con la columna ACABADO OFICINA ya se filtra solo; sin ella (partes antiguos) se empieza por este mes
+    document.getElementById('impDesde').value = r.conOficina ? '' : hoyISO().slice(0,8) + '01';
     document.getElementById('impTitulo').textContent = 'Importar · ' + f.name;
-    const nN = impFilas.filter(x => x.est[0] === 'nuevo').length, nA = impFilas.filter(x => x.est[0] === 'act').length, nO = impFilas.filter(x => x.est[0] === 'ofi').length, nG = impFilas.filter(x => x.est[0] === 'gest').length;
-    document.getElementById('impInfo').textContent = `${r.filas.length} centros en el Excel · ${nN} nuevos · ${nA} con fecha o técnico distintos · ${nO} ya revisados en oficina (no se añaden)${nG ? ` · ${nG} pendientes aquí que en oficina ya están revisados (se marcan completados)` : ''}. Por defecto se muestran los inspeccionados este mes; cambia la fecha para ver más.`;
+    const cnt = k => impFilas.filter(x => x.est[0] === k).length;
+    document.getElementById('impInfo').innerHTML = `${r.filas.length} centros en el Excel · <b>${cnt('nuevo') + cnt('kmz')} para añadir</b> · <b>${cnt('cambio')} con cambios</b> (marca los que quieras actualizar) · ${cnt('igual')} ya están igual · ${cnt('ofi')} acabados en oficina.`;
     document.getElementById('impMsg').textContent = '';
     verImport(); document.getElementById('mImport').classList.add('on');
   }catch(err){ console.error(err); msg.textContent = '⚠ No he podido leer el Excel (¿tiene contraseña para abrirlo?).'; }
@@ -809,15 +824,22 @@ document.getElementById('impOK').onclick = () => {
   const sel = impFilas.filter(x => x.sel && (!desde || (x.d.fecha||'9999') >= desde) && IMPORTABLE.includes(x.est[0]));
   const r = { nuevo:0, completado:0, actualizado:0, gest:0 };
   sel.forEach(x => {
-    if (x.est[0] === 'gest'){
-      const c = S.centros.find(c => normCD(c.numero) === normCD(x.d.numero) && !hecho(c));
-      if (c){ const t = Date.now(); pasosDe(c).forEach(p => { if (!c.pasos[p.id]) c.pasos[p.id] = t; }); if (x.d.fecha) c.fecha = x.d.fecha; r.gest++; }
+    if (x.est[0] === 'cambio'){
+      const c = x.est[2], t = Date.now();
+      x.est[3].forEach(ch => {
+        if (ch.k === 'fecha') c.fecha = x.d.fecha;
+        if (ch.k === 'operario') c.operario = operarioDe(x.d.operario);
+        if (ch.k === 'provincia') c.provincia = (S.provincias.find(p => sinAc(p.nombre) === sinAc(x.d.provincia)) || {}).nombre || c.provincia;
+        if (ch.k === 'acabar'){ pasosDe(c).forEach(p => { if (!c.pasos[p.id]) c.pasos[p.id] = t; }); r.gest++; }
+      });
+      if (x.d.obs) c.notas = conNotaCampo(c.notas, x.d.obs);
+      r.actualizado++;
       return;
     }
     const k = altaDesdeParte(x.d); if (r[k] !== undefined) r[k]++;
   });
   guardar(); cerrarImp(); if (vista==='done') setVista('pend'); else render(); syncInformes();
-  document.getElementById('msgPegar').textContent = `➕ ${r.nuevo} nuevos · 🔄 ${r.actualizado + r.completado} actualizados` + (r.gest ? ` · ✓ ${r.gest} completados (revisados en oficina)` : '');
+  document.getElementById('msgPegar').textContent = `➕ ${r.nuevo + r.completado} añadidos · 🔄 ${r.actualizado} actualizados` + (r.gest ? ` (${r.gest} marcados como completados)` : '');
   toast(`${r.nuevo + r.actualizado + r.completado + r.gest} centros del parte`);
 };
 
