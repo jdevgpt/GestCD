@@ -287,7 +287,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '1.9.2';
+const APP_VERSION = '1.10.0';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -297,13 +297,12 @@ const DEFAULT = {
     {id:'kmz',     nombre:'KMZ'},
     {id:'captura', nombre:'Captura KMZ'},
     {id:'excel',   nombre:'Excel'},
-    {id:'informe', nombre:'Informe'},
-    {id:'firma',   nombre:'Firma ingeniero'}
+    {id:'informe', nombre:'Informe'}
   ],
   provincias: [
     {nombre:'Badajoz', pasos:['fotos','kmz','captura','excel','informe']},
     {nombre:'Cáceres', pasos:['fotos','kmz','captura','excel','informe']},
-    {nombre:'Málaga',  pasos:['fotos','kmz','captura','excel','informe','firma']}
+    {nombre:'Málaga',  pasos:['fotos','kmz','captura','excel','informe']}
   ],
   centros: []
 };
@@ -377,7 +376,17 @@ const enMes = (ts, {a,m}) => { const d = new Date(ts); return d.getFullYear() ==
 function cargar(){
   try{
     const d = JSON.parse(localStorage.getItem(KEY));
-    if (d && d.pasos && d.provincias && d.centros) return d;
+    if (d && d.pasos && d.provincias && d.centros) {
+      // La firma del ingeniero no la hace el usuario: se quita el paso (una sola vez). En Málaga el
+      // paso «Informe» se marca al generar el Certificado de Revisión BT, como en el resto de provincias.
+      if (!d.sinFirma) {
+        d.pasos = d.pasos.filter(p => p.id !== 'firma');
+        d.provincias.forEach(pr => pr.pasos = (pr.pasos || []).filter(x => x !== 'firma'));
+        d.sinFirma = true;
+        try{ localStorage.setItem(KEY, JSON.stringify(d)); }catch(_){}
+      }
+      return d;
+    }
   }catch(e){}
   return JSON.parse(JSON.stringify(DEFAULT));
 }
@@ -1096,6 +1105,7 @@ document.getElementById('fileImp').onchange = async e => {
   try{
     const d = JSON.parse(await f.text());
     if (!d.centros || !d.pasos || !d.provincias) throw 0;
+    d.pasos = d.pasos.filter(p => p.id !== 'firma'); d.provincias.forEach(pr => pr.pasos = (pr.pasos || []).filter(x => x !== 'firma')); d.sinFirma = true;
     S = d; guardar(); renderAjustes(); render(); toast(`Copia importada (${d.centros.length} centros)`);
   }catch(_){ toast('El archivo no es una copia válida'); }
   e.target.value = '';
@@ -1151,7 +1161,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) sync
 // La app del KMZ (misma web) guarda en 'jdev_pasos' cuándo se hizo cada paso de cada centro:
 // { "45605": { tabla: ms, tipo: 'PT', fotos: ms, kmz: ms, excel: ms } }. Con 'tabla' se da de alta si no existe. Se marca el paso si el centro está pendiente,
 // lo tiene en su provincia y la marca es posterior a cuando se dio de alta el centro.
-const PASOS_KMZ = { fotos: '📷 Fotos', kmz: '🗺️ KMZ', excel: '📊 Excel' };
+const PASOS_KMZ = { fotos: '📷 Fotos', kmz: '🗺️ KMZ', captura: '🖼️ Captura', excel: '📊 Excel' };
 function syncPasosKmz(){
   let m = {};
   try{ m = JSON.parse(localStorage.getItem('jdev_pasos') || '{}') || {}; }catch(_){ m = {}; }
