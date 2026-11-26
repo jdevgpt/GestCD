@@ -121,6 +121,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--naranja)}
 .notas-ed{border:1.5px solid var(--gris-claro);border-radius:10px;padding:9px 10px;min-height:60px;background:#fff;outline:none;line-height:1.45;white-space:pre-wrap}
 .notas-ed:focus{border-color:var(--naranja)}
 .notas-ed:empty:before{content:attr(data-ph);color:var(--gris-med)}
+.cuenta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:-2px 2px 10px;font-size:13.5px;color:var(--gris-med)}
+.cuenta b{color:var(--gris);font-size:15px}
+.cuenta .fil{background:var(--naranja-claro);color:var(--naranja-osc);border-radius:20px;padding:2px 9px;font-size:12px;font-weight:600}
+.cuenta button{border:0;background:none;color:var(--naranja-osc);font-weight:600;font-size:12.5px;text-decoration:underline;padding:0}
 .vacio{text-align:center;color:var(--gris-med);padding:30px 10px}
 
 /* Ajustes */
@@ -237,6 +241,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
     </select>
   </div>
 
+  <div class="cuenta" id="cuenta"></div>
   <div class="lista" id="lista"></div>
 </main>
 
@@ -289,7 +294,7 @@ footer{text-align:right;padding:10px 16px 14px;font-size:11px;color:#b3b8bf;lett
 
 <script src="vendor/jszip.min.js"></script>
 <script>
-const APP_VERSION = '2.0.1';
+const APP_VERSION = '2.0.2';
 const KEY = 'gestcd_v1';
 const FIN = 'sharepoint';
 
@@ -466,6 +471,19 @@ function render(){
     (!fOp.value || c.operario === fOp.value) &&
     (!fProv.value || c.provincia === fProv.value) &&
     (!filtroMes || (hecho(c) && enMes(c.pasos[FIN], filtroMes))));
+  // contador de lo que se ve
+  const base = S.centros.filter(c => vista==='all' || (vista==='pend' ? !hecho(c) : hecho(c))).length;
+  const nomVista = {pend:'pendientes', done:'completados', all:'centros'}[vista];
+  const fil = [];
+  if (q) fil.push('«' + document.getElementById('fBuscar').value.trim() + '»');
+  if (fOp.value) fil.push(fOp.value);
+  if (fProv.value) fil.push(fProv.value);
+  if (filtroMes) fil.push(nombreMes(filtroMes));
+  document.getElementById('cuenta').innerHTML = fil.length
+    ? `<span><b>${l.length}</b> de ${base} ${nomVista}</span>${fil.map(f => `<span class="fil">${esc(f)}</span>`).join('')}<button id="quitarFil">Quitar filtros</button>`
+    : `<span><b>${l.length}</b> ${nomVista}</span>`;
+  const qf = document.getElementById('quitarFil');
+  if (qf) qf.onclick = () => { document.getElementById('fBuscar').value=''; fOp.value=''; fProv.value=''; filtroMes=null; render(); };
   const ord = document.getElementById('fOrden').value;
   const cmpF = (a,b) => (a.fecha||'').localeCompare(b.fecha||'') || a.creado - b.creado;
   const cmpTxt = (x,y) => (x||'').localeCompare(y||'', 'es', {sensitivity:'base'});
